@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DVD to Plex Pipeline</title>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.3/Sortable.min.js"></script>
+  </head>
+  <body class="bg-slate-900 text-slate-100 min-h-screen pb-16">
+    <header class="border-b border-slate-800 px-4 sm:px-6 py-4">
+      <div class="max-w-6xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div>
+          <h1 class="text-xl font-semibold tracking-tight">DVD to Plex Pipeline</h1>
+          <p class="text-sm text-slate-400">env: {{ settings.app_env }} · library: {{ settings.library_root }}</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          {% if settings.app_env == "dev" %}
+          <button
+            type="button"
+            class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-sm font-medium"
+            hx-post="/api/jobs"
+            hx-headers='{"Content-Type": "application/json"}'
+            hx-vals='{"disc_label": "dev-mock"}'
+            hx-swap="none"
+            hx-on::after-request="location.reload()"
+          >
+            Queue mock rip
+          </button>
+          {% endif %}
+        </div>
+      </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-10">
+      <section>
+        <h2 class="text-lg font-medium text-slate-200 mb-3">Needs review</h2>
+        {% if not review_cards %}
+        <p class="text-slate-500 text-sm">No discs waiting. Insert a DVD (Linux + udev) or queue a mock job in dev.</p>
+        {% else %}
+        <div class="space-y-6">
+          {% for card in review_cards %}
+            {% include "job_card.html" %}
+          {% endfor %}
+        </div>
+        {% endif %}
+      </section>
+
+      <section>
+        <h2 class="text-lg font-medium text-slate-200 mb-3">All jobs</h2>
+        <div class="overflow-x-auto rounded-lg border border-slate-800">
+          <table class="min-w-full text-sm">
+            <thead class="bg-slate-800/80 text-slate-300">
+              <tr>
+                <th class="text-left px-3 py-2">ID</th>
+                <th class="text-left px-3 py-2">Status</th>
+                <th class="text-left px-3 py-2">Kind</th>
+                <th class="text-left px-3 py-2">Staging</th>
+                <th class="text-left px-3 py-2">Error</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800">
+              {% for j in jobs %}
+              <tr class="hover:bg-slate-800/40">
+                <td class="px-3 py-2 font-mono">{{ j.id }}</td>
+                <td class="px-3 py-2">{{ j.status }}</td>
+                <td class="px-3 py-2">{{ j.kind }}</td>
+                <td class="px-3 py-2 font-mono text-xs break-all max-w-md">{{ j.staging_dir }}</td>
+                <td class="px-3 py-2 text-rose-300 text-xs break-all max-w-md">{{ j.error_message or "" }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

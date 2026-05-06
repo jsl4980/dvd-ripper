@@ -1,0 +1,16 @@
+# /etc/udev/rules.d/99-dvd-insert.rules
+#
+# When a DVD with a data filesystem becomes ready in any optical drive,
+# fire a one-shot systemd unit that POSTs to the pipeline's create-job
+# endpoint. The systemd unit (deploy/dvd-insert@.service) does the actual
+# curl + retries; udev just triggers it so we don't block its event queue.
+#
+# Install:
+#   sudo cp deploy/99-dvd-insert.rules /etc/udev/rules.d/
+#   sudo cp deploy/dvd-insert@.service /etc/systemd/system/
+#   sudo udevadm control --reload-rules
+#
+# To restrict to a specific drive, add e.g. KERNEL=="sr0".
+ACTION=="change", SUBSYSTEM=="block", KERNEL=="sr[0-9]*", \
+    ENV{ID_CDROM_MEDIA_DVD}=="1", ENV{ID_FS_TYPE}!="", \
+    TAG+="systemd", ENV{SYSTEMD_WANTS}="dvd-insert@%k.service"

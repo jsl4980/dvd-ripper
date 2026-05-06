@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+echo "==> Repository: $ROOT"
+[[ -f "$ROOT/pyproject.toml" ]] || { echo "error: pyproject.toml not found" >&2; exit 1; }
+[[ "$(id -u)" -ne 0 ]] || { echo "error: do not run as root; sudo is used internally" >&2; exit 1; }
+command -v sudo >/dev/null || { echo "error: sudo required" >&2; exit 1; }
+
+export DEBIAN_FRONTEND=noninteractive
+
+echo "==> apt packages"
+sudo apt-get update -y
+sudo apt-get install -y \
+  ca-certificates curl git \
+  ffmpeg handbrake-cli \
+  cifs-utils \
+  python3 python3-venv \
+  build-essential pkg-config \
+  libdvd-pkg || true
+
+if dpkg -l libdvd-pkg &>/dev/null; then
+  sudo debconf-set-selections <<<"libdvd-pkg libdvd-pkg/build boolean true" || true
+  sudo dpkg-reconfigure -f noninteractive libdvd-pkg 2>/dev/null || true
+fi
+
+echo "==> uv"
+if ! command -v uv >/dev/null 2>&1; then
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+fi
+export PATH="${HOME}/.local/bin:${PATH}"
+command -v uv >/dev/null || { echo "error: uv missing (~/.local/bin not on PATH)" >&2; exit 1; }
+
+echo "==> uv sync"
+uv sync
+
+ENV_FILE="$ROOT/.env"
+if [[ ! -f "$ENV_FILE" ]]; then
+  cp "$ROOT/.env.example" "$ENV_FILE"
+  echo "==> Created .env from .env.example"
+else
+  echo "==> .env already exists (left unchanged)"
+fi
+
+MOCK_REL="tests/fixtures/mock_makemkvcon/mock_makemkvcon.py"
+if [[ -f "$ROOT/$MOCK_REL" ]] && grep -qE '^MAKEMKVCON_PATH=makemkvcon' "$ENV_FILE" 2>/dev/null; then
+  sed -i "s#^MAKEMKVCON_PATH=.*#MAKEMKVCON_PATH=$ROOT/$MOCK_REL#" "$ENV_FILE"
+  sed -i 's/^DVD_DEVICE=.*/DVD_DEVICE=disc:0/' "$ENV_FILE"
+  echo "==> Set MAKEMKVCON_PATH -> absolute mock script and DVD_DEVICE=disc:0"
+fi
+
+command -v makemkvcon >/dev/null 2>&1 || echo "NOTE: makemkvcon not on PATH — install MakeMKV or set MAKEMKVCON_PATH in .env."
+command -v nvidia-smi >/dev/null 2>&1 || echo "NOTE: nvidia-smi missing — use ENCODER_PROFILE=x265 for CPU-only encodes."
+
+echo ""
+echo "Done. Start:"
+echo "  uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"

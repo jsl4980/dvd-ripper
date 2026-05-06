@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# uv
+.venv/
+
+# Project
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+staging/
+library/
+logs/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

@@ -1,0 +1,251 @@
+{# expects: card.job, card.titles, card.guess, settings #}
+<div
+  class="review-card rounded-xl border border-slate-800 bg-slate-950/60 p-4 sm:p-5 shadow-lg"
+  data-job-id="{{ card.job.id }}"
+>
+  <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
+    <div>
+      <h3 class="text-base font-semibold text-white">Job {{ card.job.id }}</h3>
+      <p class="text-xs text-slate-500 font-mono break-all">{{ card.job.staging_dir }}</p>
+      <p class="text-xs text-slate-400 mt-1">Heuristic: likely <span class="text-slate-200">{{ card.guess }}</span></p>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <button
+        type="button"
+        class="px-2 py-1 rounded border border-slate-600 text-xs text-slate-300 hover:bg-slate-800"
+        data-action="retry-rip"
+      >
+        Retry rip (failed only)
+      </button>
+    </div>
+  </div>
+
+  <p class="text-xs text-slate-500 mb-2">Drag rows to set episode order (TV). Shorter titles are often menus — mark skip.</p>
+  <div class="overflow-x-auto rounded-lg border border-slate-800 mb-4">
+    <table class="min-w-full text-sm">
+      <thead class="bg-slate-800/80 text-slate-300">
+        <tr>
+          <th class="text-left px-2 py-2 w-8"></th>
+          <th class="text-left px-2 py-2">#</th>
+          <th class="text-left px-2 py-2">File</th>
+          <th class="text-left px-2 py-2">Duration</th>
+          <th class="text-left px-2 py-2">Skip</th>
+          <th class="text-left px-2 py-2">Preview</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-slate-800 sortable-titles cursor-grab">
+        {% for t in card.titles %}
+        <tr data-title-id="{{ t.id }}">
+          <td class="px-2 py-2 text-slate-500">⠿</td>
+          <td class="px-2 py-2 font-mono">{{ t.title_index }}</td>
+          <td class="px-2 py-2 font-mono text-xs break-all">{{ t.source_filename }}</td>
+          <td class="px-2 py-2">
+            {% if t.duration_seconds %}
+              {{ (t.duration_seconds // 3600) }}:{{ '%02d' % ((t.duration_seconds % 3600) // 60) }}:{{ '%02d' % (t.duration_seconds % 60) }}
+            {% else %}
+              —
+            {% endif %}
+          </td>
+          <td class="px-2 py-2">
+            <input type="checkbox" class="skip-cb rounded border-slate-600 bg-slate-900" />
+          </td>
+          <td class="px-2 py-2">
+            <video
+              class="w-40 max-w-[10rem] rounded border border-slate-700 bg-black"
+              controls
+              preload="none"
+              muted
+              playsinline
+            >
+              <source src="/api/jobs/{{ card.job.id }}/titles/{{ t.id }}/preview.mp4" type="video/mp4" />
+            </video>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="grid sm:grid-cols-2 gap-4 mb-4">
+    <label class="flex items-center gap-2 text-sm">
+      <input type="radio" name="kind-{{ card.job.id }}" value="movie" class="kind-radio" {% if card.guess == "movie" %}checked{% endif %} />
+      Movie (TMDB)
+    </label>
+    <label class="flex items-center gap-2 text-sm">
+      <input type="radio" name="kind-{{ card.job.id }}" value="tv" class="kind-radio" {% if card.guess == "tv" %}checked{% endif %} />
+      TV series (TheTVDB)
+    </label>
+  </div>
+
+  <div class="movie-panel space-y-2 mb-4 hidden">
+    <input
+      type="search"
+      placeholder="Search movies (TMDB)…"
+      class="w-full rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm movie-q"
+    />
+    <div class="movie-results text-xs max-h-40 overflow-y-auto rounded border border-slate-800 bg-slate-900/50"></div>
+    <div class="movie-selection text-xs text-emerald-300"></div>
+    <input type="hidden" class="movie-tmdb-id" />
+    <input type="hidden" class="movie-title" />
+    <input type="hidden" class="movie-year" />
+  </div>
+
+  <div class="tv-panel space-y-2 mb-4 hidden">
+    <input
+      type="search"
+      placeholder="Search TV series (TheTVDB)…"
+      class="w-full rounded bg-slate-900 border border-slate-700 px-3 py-2 text-sm tv-q"
+    />
+    <div class="tv-results text-xs max-h-40 overflow-y-auto rounded border border-slate-800 bg-slate-900/50"></div>
+    <div class="tv-selection text-xs text-emerald-300"></div>
+    <input type="hidden" class="tvdb-id" />
+    <input type="hidden" class="show-title" />
+    <input type="hidden" class="show-year" />
+    <div class="flex flex-wrap gap-2 items-center">
+      <label class="text-xs text-slate-400">Season
+        <select class="season-select ml-1 rounded bg-slate-900 border border-slate-700 text-sm"></select>
+      </label>
+      <label class="text-xs text-slate-400">Start episode
+        <input type="number" class="start-ep ml-1 w-16 rounded bg-slate-900 border border-slate-700 text-sm" value="1" min="1" />
+      </label>
+    </div>
+  </div>
+
+  <button
+    type="button"
+    class="approve-btn px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-500 text-sm font-medium"
+  >
+    Approve & encode
+  </button>
+  <p class="approve-msg mt-2 text-xs text-slate-400"></p>
+</div>
+
+<script>
+  (function () {
+    const card = document.querySelector('.review-card[data-job-id="{{ card.job.id }}"]');
+    if (!card || card.dataset.bound === "1") return;
+    card.dataset.bound = "1";
+    const jobId = {{ card.job.id }};
+
+    const tbody = card.querySelector(".sortable-titles");
+    if (tbody && window.Sortable) {
+      new Sortable(tbody, { animation: 150 });
+    }
+
+    function selectedKind() {
+      const r = card.querySelector(".kind-radio:checked");
+      return r ? r.value : "tv";
+    }
+
+    function togglePanels() {
+      const k = selectedKind();
+      card.querySelector(".movie-panel").classList.toggle("hidden", k !== "movie");
+      card.querySelector(".tv-panel").classList.toggle("hidden", k !== "tv");
+    }
+    card.querySelectorAll(".kind-radio").forEach((r) => r.addEventListener("change", togglePanels));
+    togglePanels();
+
+    let movieTimer = null;
+    card.querySelector(".movie-q")?.addEventListener("input", (e) => {
+      clearTimeout(movieTimer);
+      const q = e.target.value.trim();
+      const box = card.querySelector(".movie-results");
+      if (q.length < 2) { box.innerHTML = ""; return; }
+      movieTimer = setTimeout(async () => {
+        const r = await fetch("/api/search/movies?q=" + encodeURIComponent(q));
+        const rows = await r.json();
+        box.innerHTML = rows.slice(0, 12).map((m) => {
+          const y = (m.release_date || "").slice(0, 4) || "?";
+          return `<button type="button" class="block w-full text-left px-2 py-1 hover:bg-slate-800 rounded movie-pick" data-id="${m.id}" data-title="${m.title.replace(/"/g, "&quot;")}" data-year="${y}">${m.title} (${y})</button>`;
+        }).join("");
+        box.querySelectorAll(".movie-pick").forEach((b) => b.addEventListener("click", () => {
+          card.querySelector(".movie-tmdb-id").value = b.dataset.id;
+          card.querySelector(".movie-title").value = b.dataset.title;
+          card.querySelector(".movie-year").value = b.dataset.year === "?" ? "" : b.dataset.year;
+          card.querySelector(".movie-selection").textContent = "Selected: " + b.dataset.title + " (" + b.dataset.year + ")";
+        }));
+      }, 300);
+    });
+
+    let tvTimer = null;
+    card.querySelector(".tv-q")?.addEventListener("input", (e) => {
+      clearTimeout(tvTimer);
+      const q = e.target.value.trim();
+      const box = card.querySelector(".tv-results");
+      if (q.length < 2) { box.innerHTML = ""; return; }
+      tvTimer = setTimeout(async () => {
+        const r = await fetch("/api/search/tv?q=" + encodeURIComponent(q));
+        const rows = await r.json();
+        box.innerHTML = rows.slice(0, 12).map((h) => {
+          const id = h.objectID || h.id;
+          const name = h.name || h.series?.name || "Unknown";
+          const y = (h.first_air_time || h.year || "").toString().slice(0, 4) || "";
+          return `<button type="button" class="block w-full text-left px-2 py-1 hover:bg-slate-800 rounded tv-pick" data-id="${id}" data-title="${name.replace(/"/g, "&quot;")}" data-year="${y}">${name}${y ? " (" + y + ")" : ""}</button>`;
+        }).join("");
+        box.querySelectorAll(".tv-pick").forEach((b) => b.addEventListener("click", async () => {
+          card.querySelector(".tvdb-id").value = b.dataset.id;
+          card.querySelector(".show-title").value = b.dataset.title;
+          card.querySelector(".show-year").value = b.dataset.year || "";
+          card.querySelector(".tv-selection").textContent = "Selected: " + b.dataset.title;
+          const sel = card.querySelector(".season-select");
+          sel.innerHTML = "";
+          const rs = await fetch("/api/tv/" + b.dataset.id + "/seasons");
+          const data = await rs.json();
+          (data.seasons || []).forEach((n) => {
+            const o = document.createElement("option");
+            o.value = n; o.textContent = "Season " + n;
+            sel.appendChild(o);
+          });
+        }));
+      }, 300);
+    });
+
+    card.querySelector('[data-action="retry-rip"]')?.addEventListener("click", async () => {
+      const r = await fetch("/api/jobs/" + jobId + "/retry", { method: "POST" });
+      const msg = card.querySelector(".approve-msg");
+      if (r.ok) { msg.textContent = "Re-queued for rip."; location.reload(); }
+      else { msg.textContent = "Retry failed: " + (await r.text()); }
+    });
+
+    card.querySelector(".approve-btn")?.addEventListener("click", async () => {
+      const msg = card.querySelector(".approve-msg");
+      msg.textContent = "";
+      const rows = [...card.querySelectorAll("tbody.sortable-titles tr")];
+      const titles = rows.map((tr) => ({
+        id: parseInt(tr.dataset.titleId, 10),
+        skip: tr.querySelector(".skip-cb").checked,
+      }));
+      const kind = selectedKind();
+      const body = { kind, titles, start_episode: parseInt(card.querySelector(".start-ep")?.value || "1", 10) };
+      if (kind === "movie") {
+        const tid = parseInt(card.querySelector(".movie-tmdb-id").value, 10);
+        if (!tid) { msg.textContent = "Pick a movie from search results."; return; }
+        body.tmdb_id = tid;
+        body.movie_title = card.querySelector(".movie-title").value;
+        const my = card.querySelector(".movie-year").value;
+        body.movie_year = my ? parseInt(my, 10) : null;
+      } else {
+        const tid = parseInt(card.querySelector(".tvdb-id").value, 10);
+        if (!tid) { msg.textContent = "Pick a TV series from search results."; return; }
+        body.tvdb_id = tid;
+        body.show_title = card.querySelector(".show-title").value;
+        const sy = card.querySelector(".show-year").value;
+        body.show_year = sy ? parseInt(sy, 10) : null;
+        const sel = card.querySelector(".season-select");
+        if (!sel.value) { msg.textContent = "Select a season."; return; }
+        body.season = parseInt(sel.value, 10);
+      }
+      const r = await fetch("/api/jobs/" + jobId + "/approve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (r.ok) {
+        msg.textContent = "Approved — encoding in background.";
+        setTimeout(() => location.reload(), 800);
+      } else {
+        msg.textContent = await r.text();
+      }
+    });
+  })();
+</script>

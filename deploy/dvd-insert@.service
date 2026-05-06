@@ -1,0 +1,10 @@
+[Unit]
+Description=Notify dvd-pipeline of disc insert on /dev/%i
+Wants=network-online.target
+After=network-online.target dvd-pipeline.service
+Requires=dvd-pipeline.service
+
+[Service]
+Type=oneshot
+# %i is the udev instance (e.g. sr0). Wait for the disc to settle, then POST.
+ExecStart=/bin/sh -c 'sleep 3; n=0; while [ "$$n" -lt 5 ]; do curl -fsS -X POST -H "Content-Type: application/json" -d "{\"disc_label\":\"%i\"}" http://127.0.0.1:8000/api/jobs && exit 0; sleep 5; n=$$((n+1)); done; exit 1'
