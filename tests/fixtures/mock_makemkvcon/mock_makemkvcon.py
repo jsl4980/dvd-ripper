@@ -106,6 +106,12 @@ def main() -> int:
                 _emit(f'DRV:{i},0,999,0,"Mock DVD drive","","D:"')
             else:
                 _emit(f'DRV:{i},256,999,0,"","",""')
+        disc_title = os.environ.get("MOCK_DISC_TITLE", "")
+        if disc_title:
+            _emit('CINFO:1,6206,"DVD disc"')
+            _emit(f'CINFO:2,0,"{disc_title}"')
+            _emit(f'CINFO:30,0,"{disc_title}"')
+            _emit(f'CINFO:32,0,"{disc_title}"')
         # Optional TINFO for play-all heuristic tests (MOCK_INFO_PLAY_ALL=1).
         if os.environ.get("MOCK_INFO_PLAY_ALL") == "1":
             title_count = int(os.environ.get("MOCK_TITLE_COUNT", "6"))

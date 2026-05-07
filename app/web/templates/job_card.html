@@ -5,7 +5,13 @@
 >
   <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
     <div>
-      <h3 class="text-base font-semibold text-white">Job {{ card.job.id }}</h3>
+      <h3 class="text-base font-semibold text-white">
+        Job {{ card.job.id }}{% if card.job.disc_title %} <span class="text-slate-300 font-normal">· {{ card.job.disc_title }}</span>{% endif %}
+      </h3>
+      <p class="text-xs text-slate-400 mt-1">
+        {% if card.job.disc_type %}<span class="mr-2">{{ card.job.disc_type }}</span>{% endif %}
+        {% if card.job.disc_label %}<span class="text-slate-500">label: {{ card.job.disc_label }}</span>{% endif %}
+      </p>
       <p class="text-xs text-slate-500 font-mono break-all">{{ card.job.staging_dir }}</p>
       <p class="text-xs text-slate-400 mt-1">Heuristic: likely <span class="text-slate-200">{{ card.guess }}</span></p>
     </div>

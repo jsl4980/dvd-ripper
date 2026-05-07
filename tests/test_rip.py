@@ -67,6 +67,26 @@ def test_disc_index_for_drive_letter_from_drv_robot():
     assert disc_index_for_drive_letter_from_drv_robot(blob, "E") is None
 
 
+def test_cinfo_from_robot_blob_and_disc_title():
+    from app.workers.rip import cinfo_from_robot_blob, disc_title_from_cinfo
+
+    blob = (
+        'CINFO:1,6206,"DVD disc"\n'
+        'CINFO:2,0,"VAMPIRE_DIARIES_SEASON2_DISC1"\n'
+        'CINFO:30,0,"VAMPIRE_DIARIES_SEASON2_DISC1"\n'
+        'CINFO:32,0,"The Vampire Diaries S2D1"\n'
+        'TINFO:0,9,0,"3:30:10"\n'
+        "TCOUNT:7\n"
+    )
+    cinfo = cinfo_from_robot_blob(blob)
+    assert cinfo[1] == "DVD disc"
+    assert cinfo[30] == "VAMPIRE_DIARIES_SEASON2_DISC1"
+    assert cinfo[32] == "The Vampire Diaries S2D1"
+    assert disc_title_from_cinfo(cinfo) == "The Vampire Diaries S2D1"
+    assert disc_title_from_cinfo({30: "VOL"}) == "VOL"
+    assert disc_title_from_cinfo({}) is None
+
+
 def test_filter_short_tv_extras_below_half_median():
     from app.workers.rip import ATTR_DURATION, filter_short_tv_extras_below_half_median
 
@@ -125,6 +145,7 @@ async def test_rip_worker_skips_play_all_with_mock_info(tmp_path, monkeypatch):
     monkeypatch.setenv("MOCK_TITLE_COUNT", "6")
     monkeypatch.setenv("MOCK_TITLE_SECONDS", "2")
     monkeypatch.setenv("MOCK_EPISODE_SECONDS", "2700")
+    monkeypatch.setenv("MOCK_DISC_TITLE", "MOCK_PLAY_ALL_DISC")
     monkeypatch.setenv("POLL_INTERVAL_SECONDS", "0.2")
     _reset_app_modules()
 
@@ -159,6 +180,7 @@ async def test_rip_worker_skips_play_all_with_mock_info(tmp_path, monkeypatch):
     titles = await list_titles(job_id)
     assert len(titles) == 5
     assert {t["title_index"] for t in titles} == {1, 2, 3, 4, 5}
+    assert job["disc_title"] == "MOCK_PLAY_ALL_DISC"
     _reset_app_modules()
 
 

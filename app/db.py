@@ -91,6 +91,12 @@ async def init_db() -> None:
                 "ALTER TABLE jobs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0"
             )
             await conn.commit()
+        if "disc_title" not in cols:
+            await conn.execute("ALTER TABLE jobs ADD COLUMN disc_title TEXT")
+            await conn.commit()
+        if "disc_type" not in cols:
+            await conn.execute("ALTER TABLE jobs ADD COLUMN disc_type TEXT")
+            await conn.commit()
 
 
 @asynccontextmanager
@@ -180,6 +186,22 @@ async def update_job_status(
             "UPDATE jobs SET status = ?, error_message = ?, cancel_requested = 0, "
             "updated_at = ? WHERE id = ?",
             (status.value, error_message, _now(), job_id),
+        )
+        await conn.commit()
+
+
+async def set_job_disc_info(
+    job_id: int,
+    *,
+    disc_title: str | None,
+    disc_type: str | None = None,
+) -> None:
+    """Save disc metadata gathered from MakeMKV's CINFO records."""
+    async with connect() as conn:
+        await conn.execute(
+            "UPDATE jobs SET disc_title = COALESCE(?, disc_title), "
+            "disc_type = COALESCE(?, disc_type), updated_at = ? WHERE id = ?",
+            (disc_title, disc_type, _now(), job_id),
         )
         await conn.commit()
 
@@ -472,6 +494,7 @@ __all__: Iterable[str] = (
     "mark_title_skipped",
     "merge_job_metadata",
     "request_cancel_rip",
+    "set_job_disc_info",
     "set_job_kind_and_id",
     "set_job_metadata",
     "set_title_encode_result",

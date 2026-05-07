@@ -35,6 +35,7 @@ from app.db import (
     add_title,
     claim_job,
     is_job_cancel_requested,
+    set_job_disc_info,
     update_job_status,
 )
 from app.state import JobStatus
@@ -78,6 +79,12 @@ ATTR_DURATION = 9
 ATTR_DISK_SIZE_HUMAN = 10
 ATTR_DISK_SIZE_BYTES = 11
 ATTR_OUTPUT_FILENAME = 27
+
+# CINFO attribute IDs (disc-level metadata).
+CINFO_TYPE = 1            # e.g. "DVD disc"
+CINFO_NAME_CODE = 2       # volume name (matches CINFO_VOLUME_NAME on most discs)
+CINFO_VOLUME_NAME = 30    # raw volume name
+CINFO_DISC_TITLE = 32     # MakeMKV-derived display name
 
 ROBOT_LINE = re.compile(r"^(MSG|TCOUNT|CINFO|TINFO|SINFO|PRGV|PRGT|PRGC|DRV):(.*)$")
 
@@ -348,9 +355,42 @@ async def _readline_with_cancel(
     return read_task.result()
 
 
+def _record_cinfo_field(cinfo_out: dict[int, str], fields: list[str]) -> None:
+    """Store a CINFO ``attr_id -> value`` from a parsed robot record."""
+    if len(fields) < 3:
+        return
+    try:
+        attr_id = int(fields[0])
+    except ValueError:
+        return
+    cinfo_out[attr_id] = fields[-1]
+
+
+def cinfo_from_robot_blob(blob: str) -> dict[int, str]:
+    """Parse CINFO records from MakeMKV ``-r`` output and return ``attr_id -> value``."""
+    out: dict[int, str] = {}
+    for line in blob.splitlines():
+        parsed = parse_robot_line(line)
+        if parsed is None or parsed[0] != "CINFO":
+            continue
+        _record_cinfo_field(out, parsed[1])
+    return out
+
+
+def disc_title_from_cinfo(cinfo: dict[int, str]) -> str | None:
+    """Return the best human-readable disc title from CINFO attrs (or ``None``)."""
+    for attr in (CINFO_DISC_TITLE, CINFO_VOLUME_NAME, CINFO_NAME_CODE):
+        v = cinfo.get(attr)
+        if v:
+            return v
+    return None
+
+
 async def _drain_makemkv_robot_stdout(
     proc: asyncio.subprocess.Process,
     job_id: int | None,
+    *,
+    cinfo_out: dict[int, str] | None = None,
 ) -> dict[int, dict[int, str]]:
     titles: dict[int, dict[int, str]] = {}
     assert proc.stdout is not None
@@ -372,6 +412,8 @@ async def _drain_makemkv_robot_stdout(
             except ValueError:
                 continue
             titles.setdefault(t_idx, {})[attr_id] = fields[3]
+        elif kind == "CINFO" and cinfo_out is not None:
+            _record_cinfo_field(cinfo_out, fields)
         elif kind == "PRGT" and len(fields) >= 3:
             log.info("phase: %s", fields[2])
     return titles
@@ -382,8 +424,8 @@ async def run_makemkv_info(
     *,
     min_length_seconds: int = 120,
     job_id: int | None = None,
-) -> dict[int, dict[int, str]]:
-    """Run ``makemkvcon info`` and return TINFO attrs per title index (robot output)."""
+) -> tuple[dict[int, dict[int, str]], dict[int, str]]:
+    """Run ``makemkvcon info`` and return ``(titles, cinfo)`` from robot output."""
     cmd = [
         *_makemkv_cmd_prefix(min_length_seconds=min_length_seconds),
         "info",
@@ -397,8 +439,9 @@ async def run_makemkv_info(
     )
     if job_id is not None:
         register_rip_subprocess(job_id, proc)
+    cinfo: dict[int, str] = {}
     try:
-        titles = await _drain_makemkv_robot_stdout(proc, job_id)
+        titles = await _drain_makemkv_robot_stdout(proc, job_id, cinfo_out=cinfo)
     except RipCancelled:
         if proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
@@ -414,7 +457,7 @@ async def run_makemkv_info(
         raise RipCancelled()
     if rc != 0:
         raise RuntimeError(f"makemkvcon info exited with code {rc}")
-    return titles
+    return titles, cinfo
 
 
 async def run_makemkv_mkv_one_title(
@@ -525,7 +568,17 @@ async def rip_one_disc(job: dict[str, Any]) -> None:
 
     await _ensure_not_cancelled(job_id)
     min_len = 120
-    info_attrs = await run_makemkv_info(source, min_length_seconds=min_len, job_id=job_id)
+    info_attrs, disc_cinfo = await run_makemkv_info(
+        source, min_length_seconds=min_len, job_id=job_id
+    )
+    disc_title = disc_title_from_cinfo(disc_cinfo)
+    disc_type = disc_cinfo.get(CINFO_TYPE)
+    if disc_title or disc_type:
+        await set_job_disc_info(
+            job_id, disc_title=disc_title, disc_type=disc_type
+        )
+        if disc_title:
+            log.info("job %d: disc title %r (%s)", job_id, disc_title, disc_type or "?")
     skip_idx = infer_combined_play_all_title_indices(info_attrs, min_length_seconds=min_len)
 
     selected_indices: list[int] | None = None
@@ -643,10 +696,6 @@ async def rip_loop() -> None:
                 await update_job_status(job["id"], JobStatus.NEEDS_REVIEW)
                 log.info("job %d: ready for review", job["id"])
             except RipCancelled:
-                staging_dir = Path(job["staging_dir"])
-                for p in staging_dir.glob("*.mkv"):
-                    with contextlib.suppress(OSError):
-                        p.unlink()
                 log.info("job %d: rip cancelled by user", job["id"])
                 await update_job_status(
                     job["id"], JobStatus.CANCELLED, error_message="Cancelled by user"

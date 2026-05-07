@@ -23,11 +23,11 @@
             class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-sm font-medium"
             hx-post="/api/jobs"
             hx-headers='{"Content-Type": "application/json"}'
-            hx-vals='{"disc_label": "dev-mock"}'
+            hx-vals='{"disc_label": "queued from web UI"}'
             hx-swap="none"
             hx-on::after-request="location.reload()"
           >
-            Queue mock rip
+            Queue new rip
           </button>
           {% endraw %}
           {% endif %}
@@ -39,7 +39,7 @@
       <section>
         <h2 class="text-lg font-medium text-slate-200 mb-3">Needs review</h2>
         {% if not review_cards %}
-        <p class="text-slate-500 text-sm">No discs waiting. Insert a DVD (Linux + udev) or queue a mock job in dev.</p>
+        <p class="text-slate-500 text-sm">No discs waiting. Insert a DVD (Linux + udev) or use <strong>Queue new rip</strong> in dev.</p>
         {% else %}
         <div class="space-y-6">
           {% for card in review_cards %}
@@ -58,6 +58,7 @@
                 <th class="text-left px-3 py-2">ID</th>
                 <th class="text-left px-3 py-2">Status</th>
                 <th class="text-left px-3 py-2">Kind</th>
+                <th class="text-left px-3 py-2">Disc</th>
                 <th class="text-left px-3 py-2">Staging</th>
                 <th class="text-left px-3 py-2">Error</th>
                 <th class="text-left px-3 py-2">Actions</th>
@@ -69,6 +70,20 @@
                 <td class="px-3 py-2 font-mono">{{ j.id }}</td>
                 <td class="px-3 py-2">{{ j.status }}</td>
                 <td class="px-3 py-2">{{ j.kind }}</td>
+                <td class="px-3 py-2 max-w-xs">
+                  {% if j.disc_title %}
+                  <div class="text-slate-100 break-words">{{ j.disc_title }}</div>
+                  {% endif %}
+                  {% if j.disc_type %}
+                  <div class="text-[11px] text-slate-500">{{ j.disc_type }}</div>
+                  {% endif %}
+                  {% if j.disc_label %}
+                  <div class="text-[11px] text-slate-400 break-words">label: {{ j.disc_label }}</div>
+                  {% endif %}
+                  {% if not j.disc_title and not j.disc_label %}
+                  <span class="text-slate-600">—</span>
+                  {% endif %}
+                </td>
                 <td class="px-3 py-2 font-mono text-xs break-all max-w-md">{{ j.staging_dir }}</td>
                 <td class="px-3 py-2 text-rose-300 text-xs break-all max-w-md">{{ j.error_message or "" }}</td>
                 <td class="px-3 py-2">
