@@ -4,6 +4,7 @@ Job status flow:
     pending_rip -> ripping -> needs_review -> approved
                 -> encoding -> publishing -> published
     (any state) -> failed (with error_message populated)
+    pending_rip | ripping -> cancelled (user cancel from the web UI)
 
 Per-title encode/publish status is tracked separately on the `titles` row
 because a single job (one disc) emits N titles that encode/publish independently.
@@ -23,6 +24,7 @@ class JobStatus(StrEnum):
     PUBLISHING = "publishing"
     PUBLISHED = "published"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class JobKind(StrEnum):
@@ -45,4 +47,6 @@ class StageStatus(StrEnum):
     FAILED = "failed"
 
 
-TERMINAL_JOB_STATUSES = frozenset({JobStatus.PUBLISHED, JobStatus.FAILED})
+TERMINAL_JOB_STATUSES = frozenset(
+    {JobStatus.PUBLISHED, JobStatus.FAILED, JobStatus.CANCELLED}
+)

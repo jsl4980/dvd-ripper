@@ -19,6 +19,7 @@ is in flight (the disc drive is the bottleneck).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import csv
 import io
 import logging
@@ -32,11 +33,38 @@ from app.config import settings
 from app.db import (
     add_title,
     claim_job,
+    is_job_cancel_requested,
     update_job_status,
 )
 from app.state import JobStatus
 
 log = logging.getLogger("rip")
+
+# Current makemkv subprocess for cooperative cancel + optional SIGKILL from API.
+_active_mkv: dict[int, asyncio.subprocess.Process] = {}
+
+
+class RipCancelled(Exception):
+    """Raised when the user cancels the rip from the web UI."""
+
+
+def register_rip_subprocess(job_id: int, proc: asyncio.subprocess.Process) -> None:
+    _active_mkv[job_id] = proc
+
+
+def clear_rip_subprocess(job_id: int) -> None:
+    _active_mkv.pop(job_id, None)
+
+
+async def kill_rip_subprocess_if_running(job_id: int) -> None:
+    """Hard-stop makemkv for this job (used by HTTP cancel after DB flag is set)."""
+    proc = _active_mkv.get(job_id)
+    if proc is None or proc.returncode is not None:
+        return
+    with contextlib.suppress(ProcessLookupError):
+        proc.kill()
+    with contextlib.suppress(asyncio.TimeoutError):
+        await asyncio.wait_for(proc.wait(), timeout=30)
 
 # `makemkvcon info <invalid>` still prints a `DRV:` table on Windows; use a
 # slot that is never a real drive so we never need an open disc for probing.
@@ -242,11 +270,51 @@ def _makemkv_cmd_prefix(*, min_length_seconds: int) -> list[str]:
     ]
 
 
-async def _drain_makemkv_robot_stdout(proc: asyncio.subprocess.Process) -> dict[int, dict[int, str]]:
+async def _readline_with_cancel(
+    proc: asyncio.subprocess.Process,
+    job_id: int | None,
+) -> bytes:
+    assert proc.stdout is not None
+    if job_id is None:
+        return await proc.stdout.readline()
+
+    async def poll_cancel() -> None:
+        while True:
+            await asyncio.sleep(0.5)
+            if await is_job_cancel_requested(job_id):
+                return
+
+    read_task = asyncio.create_task(proc.stdout.readline())
+    poll_task = asyncio.create_task(poll_cancel())
+    done, pending = await asyncio.wait(
+        {read_task, poll_task},
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for t in pending:
+        t.cancel()
+    for t in pending:
+        with contextlib.suppress(asyncio.CancelledError):
+            await t
+
+    if poll_task in done:
+        read_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await read_task
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+        raise RipCancelled()
+
+    return read_task.result()
+
+
+async def _drain_makemkv_robot_stdout(
+    proc: asyncio.subprocess.Process,
+    job_id: int | None,
+) -> dict[int, dict[int, str]]:
     titles: dict[int, dict[int, str]] = {}
     assert proc.stdout is not None
     while True:
-        raw = await proc.stdout.readline()
+        raw = await _readline_with_cancel(proc, job_id)
         if not raw:
             break
         line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
@@ -272,6 +340,7 @@ async def run_makemkv_info(
     source: str,
     *,
     min_length_seconds: int = 120,
+    job_id: int | None = None,
 ) -> dict[int, dict[int, str]]:
     """Run ``makemkvcon info`` and return TINFO attrs per title index (robot output)."""
     cmd = [
@@ -285,8 +354,23 @@ async def run_makemkv_info(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    titles = await _drain_makemkv_robot_stdout(proc)
+    if job_id is not None:
+        register_rip_subprocess(job_id, proc)
+    try:
+        titles = await _drain_makemkv_robot_stdout(proc, job_id)
+    except RipCancelled:
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(proc.wait(), timeout=120)
+        raise
+    finally:
+        if job_id is not None:
+            clear_rip_subprocess(job_id)
     rc = await proc.wait()
+    if job_id is not None and await is_job_cancel_requested(job_id):
+        raise RipCancelled()
     if rc != 0:
         raise RuntimeError(f"makemkvcon info exited with code {rc}")
     return titles
@@ -298,6 +382,7 @@ async def run_makemkv_mkv_one_title(
     title_idx: int,
     *,
     min_length_seconds: int = 120,
+    job_id: int | None = None,
 ) -> dict[int, dict[int, str]]:
     """Run ``makemkvcon mkv`` for a single title index."""
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -314,8 +399,23 @@ async def run_makemkv_mkv_one_title(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    titles = await _drain_makemkv_robot_stdout(proc)
+    if job_id is not None:
+        register_rip_subprocess(job_id, proc)
+    try:
+        titles = await _drain_makemkv_robot_stdout(proc, job_id)
+    except RipCancelled:
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(proc.wait(), timeout=120)
+        raise
+    finally:
+        if job_id is not None:
+            clear_rip_subprocess(job_id)
     rc = await proc.wait()
+    if job_id is not None and await is_job_cancel_requested(job_id):
+        raise RipCancelled()
     if rc != 0:
         raise RuntimeError(f"makemkvcon exited with code {rc}")
     return titles
@@ -326,6 +426,7 @@ async def run_makemkvcon(
     staging_dir: Path,
     *,
     min_length_seconds: int = 120,
+    job_id: int | None = None,
 ) -> dict[int, dict[int, str]]:
     """Run `makemkvcon mkv all` and return collected TINFO attrs per title.
 
@@ -346,11 +447,31 @@ async def run_makemkvcon(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-    titles = await _drain_makemkv_robot_stdout(proc)
+    if job_id is not None:
+        register_rip_subprocess(job_id, proc)
+    try:
+        titles = await _drain_makemkv_robot_stdout(proc, job_id)
+    except RipCancelled:
+        if proc.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                proc.kill()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(proc.wait(), timeout=120)
+        raise
+    finally:
+        if job_id is not None:
+            clear_rip_subprocess(job_id)
     rc = await proc.wait()
+    if job_id is not None and await is_job_cancel_requested(job_id):
+        raise RipCancelled()
     if rc != 0:
         raise RuntimeError(f"makemkvcon exited with code {rc}")
     return titles
+
+
+async def _ensure_not_cancelled(job_id: int) -> None:
+    if await is_job_cancel_requested(job_id):
+        raise RipCancelled()
 
 
 async def rip_one_disc(job: dict[str, Any]) -> None:
@@ -361,8 +482,9 @@ async def rip_one_disc(job: dict[str, Any]) -> None:
     source = await map_windows_file_volume_to_disc_if_needed(source)
     log.info("job %d: starting rip from %s -> %s", job_id, source, staging_dir)
 
+    await _ensure_not_cancelled(job_id)
     min_len = 120
-    info_attrs = await run_makemkv_info(source, min_length_seconds=min_len)
+    info_attrs = await run_makemkv_info(source, min_length_seconds=min_len, job_id=job_id)
     skip_idx = infer_combined_play_all_title_indices(info_attrs, min_length_seconds=min_len)
 
     if skip_idx:
@@ -383,12 +505,16 @@ async def rip_one_disc(job: dict[str, Any]) -> None:
         )
         titles_attrs: dict[int, dict[int, str]] = {}
         for t_idx in candidates:
+            await _ensure_not_cancelled(job_id)
             part = await run_makemkv_mkv_one_title(
-                source, staging_dir, t_idx, min_length_seconds=min_len
+                source, staging_dir, t_idx, min_length_seconds=min_len, job_id=job_id
             )
             titles_attrs.update(part)
     else:
-        titles_attrs = await run_makemkvcon(source, staging_dir, min_length_seconds=min_len)
+        await _ensure_not_cancelled(job_id)
+        titles_attrs = await run_makemkvcon(
+            source, staging_dir, min_length_seconds=min_len, job_id=job_id
+        )
 
     written = sorted(staging_dir.glob("*.mkv"))
     if not written:
@@ -441,6 +567,15 @@ async def rip_loop() -> None:
                 await rip_one_disc(job)
                 await update_job_status(job["id"], JobStatus.NEEDS_REVIEW)
                 log.info("job %d: ready for review", job["id"])
+            except RipCancelled:
+                staging_dir = Path(job["staging_dir"])
+                for p in staging_dir.glob("*.mkv"):
+                    with contextlib.suppress(OSError):
+                        p.unlink()
+                log.info("job %d: rip cancelled by user", job["id"])
+                await update_job_status(
+                    job["id"], JobStatus.CANCELLED, error_message="Cancelled by user"
+                )
             except Exception as e:
                 log.exception("job %d: rip failed", job["id"])
                 await update_job_status(

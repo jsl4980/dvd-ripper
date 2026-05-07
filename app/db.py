@@ -83,6 +83,14 @@ async def init_db() -> None:
     async with aiosqlite.connect(settings.db_path) as conn:
         await conn.executescript(SCHEMA)
         await conn.commit()
+    async with connect() as conn:
+        cur = await conn.execute("PRAGMA table_info(jobs)")
+        cols = {row[1] for row in await cur.fetchall()}
+        if "cancel_requested" not in cols:
+            await conn.execute(
+                "ALTER TABLE jobs ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0"
+            )
+            await conn.commit()
 
 
 @asynccontextmanager
@@ -169,10 +177,43 @@ async def update_job_status(
 ) -> None:
     async with connect() as conn:
         await conn.execute(
-            "UPDATE jobs SET status = ?, error_message = ?, updated_at = ? WHERE id = ?",
+            "UPDATE jobs SET status = ?, error_message = ?, cancel_requested = 0, "
+            "updated_at = ? WHERE id = ?",
             (status.value, error_message, _now(), job_id),
         )
         await conn.commit()
+
+
+async def is_job_cancel_requested(job_id: int) -> bool:
+    job = await get_job(job_id)
+    if job is None:
+        return False
+    return bool(job.get("cancel_requested", 0))
+
+
+async def request_cancel_rip(job_id: int) -> str:
+    """Cancel a rip: immediate if ``pending_rip``, else set flag if ``ripping``.
+
+    Returns ``cancelled`` (already done or was pending) or ``signaled`` (ripping).
+    """
+    job = await get_job(job_id)
+    if job is None:
+        raise LookupError("job not found")
+    st = job["status"]
+    if st == JobStatus.CANCELLED.value:
+        return "cancelled"
+    if st == JobStatus.PENDING_RIP.value:
+        await update_job_status(job_id, JobStatus.CANCELLED, error_message="Cancelled by user")
+        return "cancelled"
+    if st == JobStatus.RIPPING.value:
+        async with connect() as conn:
+            await conn.execute(
+                "UPDATE jobs SET cancel_requested = 1, updated_at = ? WHERE id = ?",
+                (_now(), job_id),
+            )
+            await conn.commit()
+        return "signaled"
+    raise ValueError(f"job status {st!r} cannot be cancelled from the web UI")
 
 
 async def set_job_metadata(
@@ -425,10 +466,12 @@ __all__: Iterable[str] = (
     "delete_titles_for_job",
     "get_job",
     "init_db",
+    "is_job_cancel_requested",
     "list_jobs",
     "list_titles",
     "mark_title_skipped",
     "merge_job_metadata",
+    "request_cancel_rip",
     "set_job_kind_and_id",
     "set_job_metadata",
     "set_title_encode_result",

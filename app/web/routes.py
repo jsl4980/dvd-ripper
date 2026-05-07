@@ -22,11 +22,13 @@ from app.db import (
     get_job,
     list_jobs,
     list_titles,
+    request_cancel_rip,
     update_job_status,
 )
 from app.metadata import tmdb, tvdb
 from app.state import JobStatus
 from app.web.approve import apply_approval
+from app.workers import rip as rip_worker
 
 log = logging.getLogger("web")
 
@@ -113,11 +115,25 @@ async def retry_job(job_id: int) -> dict[str, str]:
     job = await get_job(job_id)
     if job is None:
         raise HTTPException(404)
-    if job["status"] != JobStatus.FAILED.value:
-        raise HTTPException(400, "only failed jobs can be retried for rip")
+    if job["status"] not in (JobStatus.FAILED.value, JobStatus.CANCELLED.value):
+        raise HTTPException(400, "only failed or cancelled jobs can be retried for rip")
     await delete_titles_for_job(job_id)
     await update_job_status(job_id, JobStatus.PENDING_RIP, error_message=None)
     return {"status": "pending_rip"}
+
+
+@router.post("/api/jobs/{job_id}/cancel")
+async def cancel_rip_job(job_id: int) -> dict[str, str]:
+    """Cancel a queued or in-progress rip (pending_rip or ripping)."""
+    try:
+        outcome = await request_cancel_rip(job_id)
+    except LookupError:
+        raise HTTPException(404) from None
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e)) from e
+    await rip_worker.kill_rip_subprocess_if_running(job_id)
+    log.info("cancel rip job %d -> %s", job_id, outcome)
+    return {"outcome": outcome}
 
 
 @router.get("/api/jobs")
