@@ -14,6 +14,7 @@
       </p>
       <p class="text-xs text-slate-500 font-mono break-all">{{ card.job.staging_dir }}</p>
       <p class="text-xs text-slate-400 mt-1">Heuristic: likely <span class="text-slate-200">{{ card.guess }}</span></p>
+      <p class="auto-classify-msg text-xs text-emerald-300 mt-1 hidden"></p>
     </div>
     <div class="flex flex-wrap gap-2">
       <button
@@ -155,6 +156,91 @@
     card.querySelectorAll(".kind-radio").forEach((r) => r.addEventListener("change", togglePanels));
     togglePanels();
 
+    async function loadSeasonsInto(sel, tvdbId) {
+      sel.innerHTML = '<option value="">Loading…</option>';
+      try {
+        const rs = await fetch("/api/tv/" + encodeURIComponent(tvdbId) + "/seasons");
+        if (!rs.ok) throw new Error("HTTP " + rs.status);
+        const data = await rs.json();
+        sel.innerHTML = "";
+        (data.seasons || []).forEach((n) => {
+          const o = document.createElement("option");
+          o.value = n; o.textContent = "Season " + n;
+          sel.appendChild(o);
+        });
+        if (!sel.options.length) {
+          sel.innerHTML = '<option value="">No seasons found</option>';
+        }
+      } catch (err) {
+        sel.innerHTML = '<option value="">Failed to load seasons</option>';
+        console.warn("seasons load failed", err);
+      }
+    }
+
+    async function autoClassify() {
+      let resp;
+      try {
+        const r = await fetch("/api/jobs/" + jobId + "/auto-classify");
+        if (!r.ok) return;
+        resp = await r.json();
+      } catch (err) {
+        console.warn("auto-classify failed", err);
+        return;
+      }
+      const parsed = resp.parsed;
+      const candidates = resp.candidates || [];
+      const kind = resp.kind || "tv";
+      const status = card.querySelector(".auto-classify-msg");
+
+      const radio = card.querySelector('.kind-radio[value="' + kind + '"]');
+      if (radio && !radio.checked) { radio.checked = true; togglePanels(); }
+
+      if (kind === "movie") {
+        const q = card.querySelector(".movie-q");
+        if (parsed && parsed.name && q) q.value = parsed.name;
+        if (candidates.length) {
+          const top = candidates[0];
+          card.querySelector(".movie-tmdb-id").value = top.id || "";
+          card.querySelector(".movie-title").value = top.name || "";
+          card.querySelector(".movie-year").value = top.year || "";
+          card.querySelector(".movie-selection").textContent =
+            "Auto: " + top.name + (top.year ? " (" + top.year + ")" : "");
+        }
+      } else {
+        const q = card.querySelector(".tv-q");
+        if (parsed && parsed.name && q) q.value = parsed.name;
+        if (candidates.length) {
+          const top = candidates[0];
+          if (top.id) {
+            card.querySelector(".tvdb-id").value = top.id;
+            card.querySelector(".show-title").value = top.name || "";
+            card.querySelector(".show-year").value = top.year || "";
+            card.querySelector(".tv-selection").textContent =
+              "Auto: " + top.name + (top.year ? " (" + top.year + ")" : "");
+            const sel = card.querySelector(".season-select");
+            await loadSeasonsInto(sel, top.id);
+            if (parsed && parsed.season != null) {
+              const want = String(parsed.season);
+              const opt = [...sel.options].find((o) => o.value === want);
+              if (opt) sel.value = want;
+            }
+          }
+        }
+      }
+
+      if (status && parsed) {
+        const bits = [];
+        if (parsed.name) bits.push('"' + parsed.name + '"');
+        if (parsed.season != null) bits.push("S" + parsed.season);
+        if (parsed.disc != null) bits.push("D" + parsed.disc);
+        if (parsed.year != null) bits.push(parsed.year);
+        const conf = Math.round((parsed.confidence || 0) * 100);
+        status.textContent = "Auto-detected from disc title: " + bits.join(" · ") + " (" + conf + "% confidence)";
+        status.classList.remove("hidden");
+      }
+    }
+    autoClassify();
+
     let movieTimer = null;
     card.querySelector(".movie-q")?.addEventListener("input", (e) => {
       clearTimeout(movieTimer);
@@ -198,25 +284,7 @@
           card.querySelector(".show-title").value = b.dataset.title;
           card.querySelector(".show-year").value = b.dataset.year || "";
           card.querySelector(".tv-selection").textContent = "Selected: " + b.dataset.title;
-          const sel = card.querySelector(".season-select");
-          sel.innerHTML = '<option value="">Loading…</option>';
-          try {
-            const rs = await fetch("/api/tv/" + encodeURIComponent(b.dataset.id) + "/seasons");
-            if (!rs.ok) throw new Error("HTTP " + rs.status);
-            const data = await rs.json();
-            sel.innerHTML = "";
-            (data.seasons || []).forEach((n) => {
-              const o = document.createElement("option");
-              o.value = n; o.textContent = "Season " + n;
-              sel.appendChild(o);
-            });
-            if (!sel.options.length) {
-              sel.innerHTML = '<option value="">No seasons found</option>';
-            }
-          } catch (err) {
-            sel.innerHTML = '<option value="">Failed to load seasons</option>';
-            console.warn("seasons load failed", err);
-          }
+          await loadSeasonsInto(card.querySelector(".season-select"), b.dataset.id);
         }));
       }, 300);
     });

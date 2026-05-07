@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,7 +15,11 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from app.classify import guess_movie_or_tv
+from app.classify import (
+    final_kind_from_signals,
+    guess_movie_or_tv,
+    parse_disc_title,
+)
 from app.config import settings
 from app.db import (
     create_job,
@@ -203,6 +208,91 @@ async def tv_seasons(series_id: int) -> dict[str, Any]:
     if not seasons:
         seasons = [1]
     return {"seasons": seasons}
+
+
+def _normalize_movie_candidate(m: dict[str, Any]) -> dict[str, Any]:
+    year_str = (m.get("release_date") or "")[:4]
+    try:
+        year: int | None = int(year_str)
+    except (TypeError, ValueError):
+        year = None
+    return {
+        "id": m.get("id"),
+        "name": m.get("title") or m.get("original_title") or "",
+        "year": year,
+        "overview": m.get("overview"),
+    }
+
+
+def _normalize_tv_candidate(h: dict[str, Any]) -> dict[str, Any]:
+    obj_id = h.get("objectID") or h.get("id") or ""
+    tvdb_id = h.get("tvdb_id")
+    if tvdb_id is None:
+        m = re.match(r".*?(\d+)$", str(obj_id))
+        if m:
+            try:
+                tvdb_id = int(m.group(1))
+            except ValueError:
+                tvdb_id = None
+    name = h.get("name") or (h.get("series") or {}).get("name") or ""
+    year_raw = str(h.get("first_air_time") or h.get("year") or "")[:4]
+    try:
+        year: int | None = int(year_raw)
+    except (TypeError, ValueError):
+        year = None
+    return {
+        "id": int(tvdb_id) if isinstance(tvdb_id, int | str) and str(tvdb_id).isdigit() else None,
+        "name": name,
+        "year": year,
+        "overview": h.get("overview"),
+    }
+
+
+@router.get("/api/jobs/{job_id}/auto-classify")
+async def auto_classify_job(job_id: int) -> dict[str, Any]:
+    """Suggest a TV series or movie for the review form using the disc title.
+
+    Returns the parsed-disc-title fields, the chosen ``kind`` (TV vs movie,
+    derived from the disc title when present, otherwise duration heuristics),
+    and the top metadata candidates from TVDB or TMDB.
+    """
+    job = await get_job(job_id)
+    if job is None:
+        raise HTTPException(404)
+    titles = await list_titles(job_id)
+    durations_guess = guess_movie_or_tv(titles)
+    parsed = parse_disc_title(job.get("disc_title"))
+    kind = final_kind_from_signals(parsed, durations_guess)
+
+    candidates: list[dict[str, Any]] = []
+    if parsed and parsed.name:
+        try:
+            if kind == "tv":
+                hits = await tvdb.search_series(parsed.name)
+                candidates = [_normalize_tv_candidate(h) for h in hits[:5]]
+            else:
+                hits = await tmdb.search_movies(parsed.name)
+                candidates = [_normalize_movie_candidate(h) for h in hits[:5]]
+        except Exception:
+            log.exception("auto_classify metadata lookup failed for job %d", job_id)
+            candidates = []
+
+    parsed_dict: dict[str, Any] | None = None
+    if parsed is not None:
+        parsed_dict = {
+            "name": parsed.name,
+            "kind": parsed.kind,
+            "season": parsed.season,
+            "disc": parsed.disc,
+            "year": parsed.year,
+            "confidence": parsed.confidence,
+        }
+    return {
+        "parsed": parsed_dict,
+        "durations_guess": durations_guess,
+        "kind": kind,
+        "candidates": candidates,
+    }
 
 
 @router.get("/api/jobs/{job_id}/titles/{title_id}/preview.mp4")
