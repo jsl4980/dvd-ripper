@@ -181,10 +181,11 @@
         const r = await fetch("/api/search/tv?q=" + encodeURIComponent(q));
         const rows = await r.json();
         box.innerHTML = rows.slice(0, 12).map((h) => {
-          const id = h.objectID || h.id;
+          const objId = h.objectID || h.id || "";
+          const tvdbId = h.tvdb_id || (objId.match(/(\d+)$/) || [])[1] || "";
           const name = h.name || h.series?.name || "Unknown";
           const y = (h.first_air_time || h.year || "").toString().slice(0, 4) || "";
-          return `<button type="button" class="block w-full text-left px-2 py-1 hover:bg-slate-800 rounded tv-pick" data-id="${id}" data-title="${name.replace(/"/g, "&quot;")}" data-year="${y}">${name}${y ? " (" + y + ")" : ""}</button>`;
+          return `<button type="button" class="block w-full text-left px-2 py-1 hover:bg-slate-800 rounded tv-pick" data-id="${tvdbId}" data-title="${name.replace(/"/g, "&quot;")}" data-year="${y}">${name}${y ? " (" + y + ")" : ""}</button>`;
         }).join("");
         box.querySelectorAll(".tv-pick").forEach((b) => b.addEventListener("click", async () => {
           card.querySelector(".tvdb-id").value = b.dataset.id;
@@ -192,14 +193,24 @@
           card.querySelector(".show-year").value = b.dataset.year || "";
           card.querySelector(".tv-selection").textContent = "Selected: " + b.dataset.title;
           const sel = card.querySelector(".season-select");
-          sel.innerHTML = "";
-          const rs = await fetch("/api/tv/" + b.dataset.id + "/seasons");
-          const data = await rs.json();
-          (data.seasons || []).forEach((n) => {
-            const o = document.createElement("option");
-            o.value = n; o.textContent = "Season " + n;
-            sel.appendChild(o);
-          });
+          sel.innerHTML = '<option value="">Loading…</option>';
+          try {
+            const rs = await fetch("/api/tv/" + encodeURIComponent(b.dataset.id) + "/seasons");
+            if (!rs.ok) throw new Error("HTTP " + rs.status);
+            const data = await rs.json();
+            sel.innerHTML = "";
+            (data.seasons || []).forEach((n) => {
+              const o = document.createElement("option");
+              o.value = n; o.textContent = "Season " + n;
+              sel.appendChild(o);
+            });
+            if (!sel.options.length) {
+              sel.innerHTML = '<option value="">No seasons found</option>';
+            }
+          } catch (err) {
+            sel.innerHTML = '<option value="">Failed to load seasons</option>';
+            console.warn("seasons load failed", err);
+          }
         }));
       }, 300);
     });
