@@ -101,9 +101,9 @@ def normalize_makemkv_source(device_or_source: str) -> str:
     """Map a configured DVD path/identifier to a makemkvcon source string.
 
     Already-prefixed sources (`dev:`, `disc:`, `file:`, `iso:`) pass through.
-    `/dev/sr0` -> `dev:/dev/sr0`. A bare Windows drive letter like `D:`
-    becomes `disc:0` (the user can override with an explicit `disc:N` if
-    they have multiple optical drives).
+    `/dev/sr0` -> `dev:/dev/sr0`. A bare Windows drive letter like ``D:``
+    becomes ``file:D:/`` so MakeMKV opens that volume (``disc:0`` is not
+    reliably the same physical drive letter).
     """
     s = device_or_source.strip()
     if not s:
@@ -115,8 +115,9 @@ def normalize_makemkv_source(device_or_source: str) -> str:
         return f"dev:{s}"
     if s.lower().endswith(".iso"):
         return f"iso:{s}"
-    if len(s) == 2 and s[1] == ":":
-        return "disc:0"
+    if len(s) == 2 and s[1] == ":" and s[0].isalpha():
+        letter = s[0].upper()
+        return f"file:{letter}:/"
     return s
 
 

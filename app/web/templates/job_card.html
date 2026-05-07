@@ -41,7 +41,11 @@
           <td class="px-2 py-2 font-mono text-xs break-all">{{ t.source_filename }}</td>
           <td class="px-2 py-2">
             {% if t.duration_seconds %}
-              {{ (t.duration_seconds // 3600) }}:{{ '%02d' % ((t.duration_seconds % 3600) // 60) }}:{{ '%02d' % (t.duration_seconds % 60) }}
+              {% set ds = t.duration_seconds | int %}
+              {% set _h = ds // 3600 %}
+              {% set _m = (ds % 3600) // 60 %}
+              {% set _s = ds % 60 %}
+              {{ _h }}:{% if _m < 10 %}0{% endif %}{{ _m }}:{% if _s < 10 %}0{% endif %}{{ _s }}
             {% else %}
               —
             {% endif %}

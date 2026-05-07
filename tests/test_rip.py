@@ -51,7 +51,7 @@ def test_normalize_makemkv_source():
     assert normalize_makemkv_source("/dev/sr0") == "dev:/dev/sr0"
     assert normalize_makemkv_source("dev:/dev/sr1") == "dev:/dev/sr1"
     assert normalize_makemkv_source("disc:0") == "disc:0"
-    assert normalize_makemkv_source("D:") == "disc:0"
+    assert normalize_makemkv_source("D:") == "file:D:/"
     assert normalize_makemkv_source("movie.iso") == "iso:movie.iso"
 
 
