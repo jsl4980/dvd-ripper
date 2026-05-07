@@ -76,9 +76,9 @@ async def index(request: Request) -> HTMLResponse:
         else:
             other.append(j)
     return TEMPLATES.TemplateResponse(
+        request,
         "index.html",
         {
-            "request": request,
             "jobs": jobs,
             "review_cards": review_cards,
             "other_jobs": other,

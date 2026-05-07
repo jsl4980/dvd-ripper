@@ -17,6 +17,7 @@
         </div>
         <div class="flex flex-wrap gap-2">
           {% if settings.app_env == "dev" %}
+          {% raw %}
           <button
             type="button"
             class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-sm font-medium"
@@ -28,6 +29,7 @@
           >
             Queue mock rip
           </button>
+          {% endraw %}
           {% endif %}
         </div>
       </div>
