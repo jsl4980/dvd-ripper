@@ -28,6 +28,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+# `makemkvcon info <invalid>` still prints a `DRV:` table on Windows; use a
+# slot that is never a real drive so we never need an open disc for probing.
+_FAKE_DISC_SLOT_FOR_DRIVE_PROBE = "disc:99"
+
 from app.config import settings
 from app.db import (
     add_title,
@@ -102,8 +106,9 @@ def normalize_makemkv_source(device_or_source: str) -> str:
 
     Already-prefixed sources (`dev:`, `disc:`, `file:`, `iso:`) pass through.
     `/dev/sr0` -> `dev:/dev/sr0`. A bare Windows drive letter like ``D:``
-    becomes ``file:D:/`` so MakeMKV opens that volume (``disc:0`` is not
-    reliably the same physical drive letter).
+    becomes ``file:D:/``; on Windows the rip worker then maps that to
+    ``disc:N`` using MakeMKV's ``DRV:`` table (``file:`` volume access often
+    fails with exit 10 on real DVD drives).
     """
     s = device_or_source.strip()
     if not s:
@@ -119,6 +124,69 @@ def normalize_makemkv_source(device_or_source: str) -> str:
         letter = s[0].upper()
         return f"file:{letter}:/"
     return s
+
+
+_WIN_FILE_VOLUME = re.compile(r"^file:([A-Za-z]):/?$")
+
+
+def disc_index_for_drive_letter_from_drv_robot(blob: str, letter: str) -> int | None:
+    """Parse ``makemkvcon -r info …`` robot output; return index where last DRV field is ``X:``."""
+    want = f"{letter.strip().upper()}:"
+    for line in blob.splitlines():
+        parsed = parse_robot_line(line)
+        if parsed is None or parsed[0] != "DRV":
+            continue
+        fields = parsed[1]
+        if len(fields) < 2:
+            continue
+        try:
+            idx = int(fields[0])
+        except ValueError:
+            continue
+        letter_field = fields[-1].strip() if fields else ""
+        if letter_field.upper() == want.upper():
+            return idx
+    return None
+
+
+async def makemkv_disc_index_for_windows_drive(letter: str) -> int | None:
+    """Return MakeMKV ``disc:`` index for a Windows drive letter (e.g. ``D``)."""
+    binary = settings.makemkvcon_path
+    prefix: list[str] = []
+    if binary.lower().endswith(".py"):
+        prefix = [sys.executable]
+    cmd = [*prefix, binary, "-r", "--noscan", "info", _FAKE_DISC_SLOT_FOR_DRIVE_PROBE]
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    blob, _ = await proc.communicate()
+    return disc_index_for_drive_letter_from_drv_robot(
+        blob.decode("utf-8", errors="replace"),
+        letter,
+    )
+
+
+async def map_windows_file_volume_to_disc_if_needed(source: str) -> str:
+    """On Windows, replace ``file:X:/`` with ``disc:N`` when MakeMKV lists ``X:``."""
+    if sys.platform != "win32":
+        return source
+    m = _WIN_FILE_VOLUME.match(source)
+    if not m:
+        return source
+    letter = m.group(1)
+    idx = await makemkv_disc_index_for_windows_drive(letter)
+    if idx is None:
+        log.warning(
+            "MakeMKV drive table has no %s: entry; using %s (may fail for DVD video)",
+            letter,
+            source,
+        )
+        return source
+    mapped = f"disc:{idx}"
+    log.info("Windows DVD drive %s: -> %s (direct disc access)", letter, mapped)
+    return mapped
 
 
 async def run_makemkvcon(
@@ -193,6 +261,7 @@ async def rip_one_disc(job: dict[str, Any]) -> None:
     job_id = job["id"]
     staging_dir = Path(job["staging_dir"])
     source = normalize_makemkv_source(settings.dvd_device)
+    source = await map_windows_file_volume_to_disc_if_needed(source)
     log.info("job %d: starting rip from %s -> %s", job_id, source, staging_dir)
 
     titles_attrs = await run_makemkvcon(source, staging_dir)

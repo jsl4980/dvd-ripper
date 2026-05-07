@@ -55,6 +55,18 @@ def test_normalize_makemkv_source():
     assert normalize_makemkv_source("movie.iso") == "iso:movie.iso"
 
 
+def test_disc_index_for_drive_letter_from_drv_robot():
+    from app.workers.rip import disc_index_for_drive_letter_from_drv_robot
+
+    blob = (
+        'DRV:0,0,999,0,"DVD HL-DT-ST","","D:"\n'
+        'DRV:1,256,999,0,"","",""\n'
+        "TCOUNT:0\n"
+    )
+    assert disc_index_for_drive_letter_from_drv_robot(blob, "D") == 0
+    assert disc_index_for_drive_letter_from_drv_robot(blob, "E") is None
+
+
 @pytest.mark.asyncio
 async def test_rip_worker_e2e(env):
     from app.db import create_job, get_job, init_db, list_titles

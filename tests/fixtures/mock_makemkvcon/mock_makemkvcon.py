@@ -98,8 +98,19 @@ def main() -> int:
     parser.add_argument("dest", nargs="?")
     args, _unknown = parser.parse_known_args()
 
+    if args.verb == "info":
+        # Minimal robot output so Windows drive-letter -> disc index probing works.
+        for i in range(16):
+            if i == 0:
+                _emit(f'DRV:{i},0,999,0,"Mock DVD drive","","D:"')
+            else:
+                _emit(f'DRV:{i},256,999,0,"","",""')
+        _emit("TCOUNT:0")
+        _emit_msg(5010, "Failed to open disc")
+        return 0
+
     if args.verb != "mkv":
-        _emit_msg(1, f"mock supports only `mkv` verb (got {args.verb})")
+        _emit_msg(1, f"mock supports only `mkv` or `info` verb (got {args.verb})")
         return 2
     if not args.dest:
         _emit_msg(1, "mock: missing destination directory")
