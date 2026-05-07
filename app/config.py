@@ -12,7 +12,7 @@ from typing import Literal
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-EncoderProfile = Literal["nvenc_h264", "nvenc_h265", "x265"]
+EncoderProfile = Literal["nvenc_h264", "nvenc_h265", "x264", "x265"]
 
 
 class Settings(BaseSettings):
@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     port: int = 8000
 
     poll_interval_seconds: float = 2.0
+
+    # Auto-queue a rip when a fresh disc is inserted (Windows: watches the
+    # drive letter from ``DVD_DEVICE``).
+    disc_watch_enabled: bool = True
+    disc_watch_poll_seconds: float = 5.0
 
     @field_validator("staging_dir", "library_root", "db_path", mode="after")
     @classmethod

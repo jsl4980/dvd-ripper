@@ -23,6 +23,7 @@ from app.db import (
     list_jobs,
     list_titles,
     request_cancel_rip,
+    requeue_failed_encode,
     update_job_status,
 )
 from app.metadata import tmdb, tvdb
@@ -120,6 +121,23 @@ async def retry_job(job_id: int) -> dict[str, str]:
     await delete_titles_for_job(job_id)
     await update_job_status(job_id, JobStatus.PENDING_RIP, error_message=None)
     return {"status": "pending_rip"}
+
+
+@router.post("/api/jobs/{job_id}/retry-encode")
+async def retry_encode_job(job_id: int) -> dict[str, Any]:
+    """Re-queue a failed encode (resets failed titles + flips job to approved)."""
+    job = await get_job(job_id)
+    if job is None:
+        raise HTTPException(404)
+    if job["status"] != JobStatus.FAILED.value:
+        raise HTTPException(400, "only failed jobs can be retried for encode")
+    if not job.get("metadata_id"):
+        raise HTTPException(
+            400, "job has no approval/metadata yet; approve from review first"
+        )
+    summary = await requeue_failed_encode(job_id)
+    log.info("retry encode job %d -> reset %d title(s)", job_id, summary["reset_titles"])
+    return {"status": "approved", **summary}
 
 
 @router.post("/api/jobs/{job_id}/cancel")

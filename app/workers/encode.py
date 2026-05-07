@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from collections import deque
 from pathlib import Path
 
 from app.config import settings
@@ -53,8 +54,24 @@ def _encoder_flag() -> str:
     return {
         "nvenc_h264": "nvenc_h264",
         "nvenc_h265": "nvenc_h265",
+        "x264": "x264",
         "x265": "x265",
     }[settings.encoder_profile]
+
+
+_HB_TAIL_LINES = 80
+
+
+def _format_handbrake_error(rc: int, tail: list[str]) -> str:
+    """Build a RuntimeError message including the last HB output lines.
+
+    Without this, a non-zero exit would surface as just "exited with code 3"
+    in the UI, hiding the actual reason (e.g. ``Cannot load nvcuda.dll``).
+    """
+    if not tail:
+        return f"HandBrakeCLI exited with code {rc}"
+    body = "\n".join(tail).strip()
+    return f"HandBrakeCLI exited with code {rc}:\n{body}"
 
 
 async def encode_one_title(job_id: int, staging_dir: Path, title: dict[str, object]) -> Path:
@@ -110,17 +127,22 @@ async def encode_one_title(job_id: int, staging_dir: Path, title: dict[str, obje
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.STDOUT,
+        stderr=asyncio.subprocess.STDOUT,
     )
     assert proc.stdout is not None
+    tail: deque[str] = deque(maxlen=_HB_TAIL_LINES)
     while True:
         line = await proc.stdout.readline()
         if not line:
             break
-        log.debug("handbrake: %s", line.decode(errors="replace").rstrip())
+        text = line.decode(errors="replace").rstrip()
+        tail.append(text)
+        log.debug("handbrake: %s", text)
     rc = await proc.wait()
     if rc != 0:
-        raise RuntimeError(f"HandBrakeCLI exited with code {rc}")
+        for entry in tail:
+            log.error("handbrake: %s", entry)
+        raise RuntimeError(_format_handbrake_error(rc, list(tail)))
     if not dest.is_file():
         raise RuntimeError(f"HandBrake finished but output missing: {dest}")
     return dest

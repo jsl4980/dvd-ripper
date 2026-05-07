@@ -288,6 +288,37 @@ async def delete_job(job_id: int) -> None:
         await conn.commit()
 
 
+async def requeue_failed_encode(job_id: int) -> dict[str, int]:
+    """Reset failed/running encodes back to pending and the job back to ``approved``.
+
+    Use this after a transient encode error so the worker re-claims and retries.
+    Titles whose encode is already ``done`` are left alone. Publish status is
+    untouched. Returns ``{"reset_titles": N}``.
+    """
+    async with connect() as conn:
+        cur = await conn.execute(
+            "UPDATE titles SET encode_status = ?, encode_error = NULL, "
+            "encoded_filename = NULL "
+            "WHERE job_id = ? AND assignment_kind IS NOT NULL "
+            "AND assignment_kind != 'skip' "
+            "AND encode_status IN (?, ?)",
+            (
+                StageStatus.PENDING.value,
+                job_id,
+                StageStatus.FAILED.value,
+                StageStatus.RUNNING.value,
+            ),
+        )
+        reset = cur.rowcount or 0
+        await conn.execute(
+            "UPDATE jobs SET status = ?, error_message = NULL, "
+            "cancel_requested = 0, updated_at = ? WHERE id = ?",
+            (JobStatus.APPROVED.value, _now(), job_id),
+        )
+        await conn.commit()
+        return {"reset_titles": reset}
+
+
 async def delete_titles_for_job(job_id: int) -> None:
     async with connect() as conn:
         await conn.execute("DELETE FROM titles WHERE job_id = ?", (job_id,))
@@ -494,6 +525,7 @@ __all__: Iterable[str] = (
     "mark_title_skipped",
     "merge_job_metadata",
     "request_cancel_rip",
+    "requeue_failed_encode",
     "set_job_disc_info",
     "set_job_kind_and_id",
     "set_job_metadata",

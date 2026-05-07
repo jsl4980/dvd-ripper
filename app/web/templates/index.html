@@ -86,7 +86,7 @@
                 </td>
                 <td class="px-3 py-2 font-mono text-xs break-all max-w-md">{{ j.staging_dir }}</td>
                 <td class="px-3 py-2 text-rose-300 text-xs break-all max-w-md">{{ j.error_message or "" }}</td>
-                <td class="px-3 py-2">
+                <td class="px-3 py-2 space-y-1">
                   {% if j.status in ('pending_rip', 'ripping') %}
                   <button
                     type="button"
@@ -97,6 +97,18 @@
                     hx-on::after-request="location.reload()"
                   >
                     Cancel rip
+                  </button>
+                  {% endif %}
+                  {% if j.status == 'failed' and j.metadata_id %}
+                  <button
+                    type="button"
+                    class="px-2 py-1 rounded border border-indigo-700 text-indigo-200 hover:bg-indigo-950 text-xs"
+                    hx-post="/api/jobs/{{ j.id }}/retry-encode"
+                    hx-swap="none"
+                    hx-confirm="Retry encoding for this job?"
+                    hx-on::after-request="location.reload()"
+                  >
+                    Retry encode
                   </button>
                   {% endif %}
                 </td>

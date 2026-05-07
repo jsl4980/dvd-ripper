@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.db import init_db
 from app.web.routes import router as web_router
+from app.workers.disc_watch import disc_watch_loop
 from app.workers.encode import encode_loop
 from app.workers.publish import publish_loop
 from app.workers.rip import rip_loop
@@ -43,8 +44,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         asyncio.create_task(rip_loop(), name="rip-worker"),
         asyncio.create_task(encode_loop(), name="encode-worker"),
         asyncio.create_task(publish_loop(), name="publish-worker"),
+        asyncio.create_task(disc_watch_loop(), name="disc-watcher"),
     ]
-    log.info("workers started: rip, encode, publish")
+    log.info("workers started: rip, encode, publish, disc_watch")
     try:
         yield
     finally:
