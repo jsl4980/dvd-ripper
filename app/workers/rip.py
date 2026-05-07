@@ -528,6 +528,7 @@ async def rip_one_disc(job: dict[str, Any]) -> None:
     info_attrs = await run_makemkv_info(source, min_length_seconds=min_len, job_id=job_id)
     skip_idx = infer_combined_play_all_title_indices(info_attrs, min_length_seconds=min_len)
 
+    selected_indices: list[int] | None = None
     if skip_idx:
         candidates = sorted(
             idx
@@ -543,19 +544,18 @@ async def rip_one_disc(job: dict[str, Any]) -> None:
         )
         if not candidates:
             raise RuntimeError("after short-title filtering, no titles left to rip")
+        selected_indices = candidates
         log.info(
             "job %d: ripping %d title(s) individually (skipped play-all %s)",
             job_id,
             len(candidates),
             sorted(skip_idx),
         )
-        titles_attrs: dict[int, dict[int, str]] = {}
         for t_idx in candidates:
             await _ensure_not_cancelled(job_id)
-            part = await run_makemkv_mkv_one_title(
+            await run_makemkv_mkv_one_title(
                 source, staging_dir, t_idx, min_length_seconds=min_len, job_id=job_id
             )
-            titles_attrs.update(part)
     else:
         await _ensure_not_cancelled(job_id)
         titles_attrs = await run_makemkvcon(
@@ -566,37 +566,66 @@ async def rip_one_disc(job: dict[str, Any]) -> None:
     if not written:
         raise RuntimeError("makemkvcon finished but no .mkv files were produced")
 
-    name_to_attrs: dict[str, dict[int, str]] = {}
-    for t_idx, attrs in titles_attrs.items():
-        fname = attrs.get(ATTR_OUTPUT_FILENAME)
-        if fname:
-            name_to_attrs[fname] = {**attrs, "_title_idx": str(t_idx)}  # type: ignore[dict-item]
-
     inserted = 0
-    for path in written:
-        attrs = name_to_attrs.get(path.name, {})
-        try:
-            title_idx = int(attrs.get("_title_idx", "0"))  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            title_idx = inserted
-        duration = duration_to_seconds(attrs.get(ATTR_DURATION, ""))
-        try:
-            size_bytes = int(attrs.get(ATTR_DISK_SIZE_BYTES, "")) if attrs.get(ATTR_DISK_SIZE_BYTES) else None
-        except ValueError:
-            size_bytes = None
-        try:
-            chapters = int(attrs.get(ATTR_CHAPTER_COUNT, "")) if attrs.get(ATTR_CHAPTER_COUNT) else None
-        except ValueError:
-            chapters = None
-        await add_title(
-            job_id,
-            title_index=title_idx,
-            source_filename=path.name,
-            duration_seconds=duration,
-            size_bytes=size_bytes,
-            chapter_count=chapters,
-        )
-        inserted += 1
+    if selected_indices is not None:
+        # In per-title mode, trust the original `info` metadata for selected
+        # indices only. `mkv <idx>` often re-emits TINFO for many titles.
+        for t_idx in selected_indices:
+            attrs = info_attrs.get(t_idx, {})
+            fname = attrs.get(ATTR_OUTPUT_FILENAME)
+            if not fname:
+                continue
+            path = staging_dir / fname
+            if not path.is_file():
+                continue
+            duration = duration_to_seconds(attrs.get(ATTR_DURATION, ""))
+            try:
+                size_bytes = int(attrs.get(ATTR_DISK_SIZE_BYTES, "")) if attrs.get(ATTR_DISK_SIZE_BYTES) else None
+            except ValueError:
+                size_bytes = None
+            try:
+                chapters = int(attrs.get(ATTR_CHAPTER_COUNT, "")) if attrs.get(ATTR_CHAPTER_COUNT) else None
+            except ValueError:
+                chapters = None
+            await add_title(
+                job_id,
+                title_index=t_idx,
+                source_filename=path.name,
+                duration_seconds=duration,
+                size_bytes=size_bytes,
+                chapter_count=chapters,
+            )
+            inserted += 1
+    else:
+        name_to_attrs: dict[str, dict[int, str]] = {}
+        for t_idx, attrs in titles_attrs.items():
+            fname = attrs.get(ATTR_OUTPUT_FILENAME)
+            if fname:
+                name_to_attrs[fname] = {**attrs, "_title_idx": str(t_idx)}  # type: ignore[dict-item]
+        for path in written:
+            attrs = name_to_attrs.get(path.name, {})
+            try:
+                title_idx = int(attrs.get("_title_idx", "0"))  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                title_idx = inserted
+            duration = duration_to_seconds(attrs.get(ATTR_DURATION, ""))
+            try:
+                size_bytes = int(attrs.get(ATTR_DISK_SIZE_BYTES, "")) if attrs.get(ATTR_DISK_SIZE_BYTES) else None
+            except ValueError:
+                size_bytes = None
+            try:
+                chapters = int(attrs.get(ATTR_CHAPTER_COUNT, "")) if attrs.get(ATTR_CHAPTER_COUNT) else None
+            except ValueError:
+                chapters = None
+            await add_title(
+                job_id,
+                title_index=title_idx,
+                source_filename=path.name,
+                duration_seconds=duration,
+                size_bytes=size_bytes,
+                chapter_count=chapters,
+            )
+            inserted += 1
     log.info("job %d: ripped %d titles", job_id, inserted)
 
 
