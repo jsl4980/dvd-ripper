@@ -24,6 +24,7 @@ import csv
 import io
 import logging
 import re
+import statistics
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -254,6 +255,46 @@ def infer_combined_play_all_title_indices(
         )
         return {max_idx}
     return set()
+
+
+def filter_short_tv_extras_below_half_median(
+    info_attrs: dict[int, dict[int, str]],
+    candidate_indices: list[int],
+    *,
+    min_length_seconds: int,
+) -> list[int]:
+    """Drop titles far shorter than typical episodes (menus/extras) on TV discs.
+
+    MakeMKV's ``--minlength`` only removes very short tracks; a ~3 min promo can
+    still appear beside ~42 min episodes. After play-all removal, require each
+    rip to be at least half the **median** candidate duration when that median
+    looks like a TV episode block (≥ 20 min).
+    """
+    pairs: list[tuple[int, int]] = []
+    for idx in candidate_indices:
+        attrs = info_attrs.get(idx, {})
+        ds = duration_to_seconds(attrs.get(ATTR_DURATION, ""))
+        if ds is None or ds < min_length_seconds:
+            continue
+        pairs.append((idx, ds))
+    if len(pairs) < 4:
+        return list(candidate_indices)
+    durs = sorted(d for _, d in pairs)
+    median = int(statistics.median(durs))
+    if median < 20 * 60:
+        return list(candidate_indices)
+    floor = max(min_length_seconds, median // 2)
+    kept_idx = [idx for idx, d in pairs if d >= floor]
+    if len(kept_idx) < 2:
+        return list(candidate_indices)
+    dropped = sorted(set(candidate_indices) - set(kept_idx))
+    if dropped:
+        log.info(
+            "skipping extra-short titles vs ~half of median episode (%ds): indices %s",
+            median,
+            dropped,
+        )
+    return sorted(kept_idx)
 
 
 def _makemkv_cmd_prefix(*, min_length_seconds: int) -> list[str]:
@@ -497,8 +538,13 @@ async def rip_one_disc(job: dict[str, Any]) -> None:
         )
         if not candidates:
             raise RuntimeError("after play-all filtering, no titles left to rip")
+        candidates = filter_short_tv_extras_below_half_median(
+            info_attrs, candidates, min_length_seconds=min_len
+        )
+        if not candidates:
+            raise RuntimeError("after short-title filtering, no titles left to rip")
         log.info(
-            "job %d: ripping %d title(s) individually (skipped indices %s)",
+            "job %d: ripping %d title(s) individually (skipped play-all %s)",
             job_id,
             len(candidates),
             sorted(skip_idx),

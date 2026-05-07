@@ -67,6 +67,30 @@ def test_disc_index_for_drive_letter_from_drv_robot():
     assert disc_index_for_drive_letter_from_drv_robot(blob, "E") is None
 
 
+def test_filter_short_tv_extras_below_half_median():
+    from app.workers.rip import ATTR_DURATION, filter_short_tv_extras_below_half_median
+
+    # Six ~42 min episodes + one ~3.5 min extra (same shape as many TV DVDs).
+    info = {
+        1: {ATTR_DURATION: "0:41:45"},
+        2: {ATTR_DURATION: "0:42:21"},
+        3: {ATTR_DURATION: "0:42:06"},
+        4: {ATTR_DURATION: "0:42:19"},
+        5: {ATTR_DURATION: "0:41:39"},
+        8: {ATTR_DURATION: "0:03:34"},
+    }
+    cand = [1, 2, 3, 4, 5, 8]
+    out = filter_short_tv_extras_below_half_median(info, cand, min_length_seconds=120)
+    assert out == [1, 2, 3, 4, 5]
+
+    # Too few titles: no filtering.
+    assert filter_short_tv_extras_below_half_median(
+        {9: {ATTR_DURATION: "0:05:00"}, 10: {ATTR_DURATION: "0:06:00"}},
+        [9, 10],
+        min_length_seconds=120,
+    ) == [9, 10]
+
+
 def test_infer_combined_play_all_title_indices():
     from app.workers.rip import ATTR_DURATION, infer_combined_play_all_title_indices
 
