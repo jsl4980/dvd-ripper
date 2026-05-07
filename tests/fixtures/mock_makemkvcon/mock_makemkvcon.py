@@ -3,7 +3,8 @@
 
 Implements just enough of the robot-mode CLI surface for our rip worker:
 
-  mock_makemkvcon -r [--noscan] [--minlength=N] mkv <source> all <out_dir>
+  mock_makemkvcon -r [--noscan] [--minlength=N] mkv <source> all|<title_id> <out_dir>
+  mock_makemkvcon -r [--noscan] [--minlength=N] info <source>
 
 When invoked, it:
 
@@ -105,7 +106,19 @@ def main() -> int:
                 _emit(f'DRV:{i},0,999,0,"Mock DVD drive","","D:"')
             else:
                 _emit(f'DRV:{i},256,999,0,"","",""')
-        _emit("TCOUNT:0")
+        # Optional TINFO for play-all heuristic tests (MOCK_INFO_PLAY_ALL=1).
+        if os.environ.get("MOCK_INFO_PLAY_ALL") == "1":
+            title_count = int(os.environ.get("MOCK_TITLE_COUNT", "6"))
+            ep_sec = int(os.environ.get("MOCK_EPISODE_SECONDS", "2700"))  # 45 min
+            n_eps = max(3, title_count - 1)
+            play_all_sec = ep_sec * n_eps
+            for i in range(title_count):
+                sec = play_all_sec if i == 0 else ep_sec
+                _emit_tinfo(i, 9, _h_m_s(sec))
+                _emit_tinfo(i, 27, f"title{i:02d}.mkv")
+            _emit(f"TCOUNT:{title_count}")
+        else:
+            _emit("TCOUNT:0")
         _emit_msg(5010, "Failed to open disc")
         return 0
 
@@ -126,6 +139,41 @@ def main() -> int:
 
     _emit_msg(1005, "MakeMKV mock started")
     _emit_msg(3007, f"Using direct disc access mode for {args.source!r}")
+
+    selection = args.selection or "all"
+    if selection != "all":
+        try:
+            only_idx = int(selection)
+        except ValueError:
+            _emit_msg(1, f"mock: bad mkv selection {selection!r}")
+            return 2
+        if only_idx < 0 or only_idx >= title_count:
+            _emit_msg(1, f"mock: title index {only_idx} out of range")
+            return 2
+        _emit("TCOUNT:1")
+        _emit('CINFO:1,6209,"MockShow Season 1"')
+        _emit('CINFO:2,0,"MOCK_DVD"')
+        i = only_idx
+        sample = samples[i]
+        out_path = out_dir / f"title{i:02d}.mkv"
+        size = sample.stat().st_size if sample.exists() else 0
+        _emit_tinfo(i, 2, f"MockShow S01D01 T{i:02d}")
+        _emit_tinfo(i, 8, "6")
+        _emit_tinfo(i, 9, _h_m_s(title_seconds))
+        _emit_tinfo(i, 10, _human_size(size))
+        _emit_tinfo(i, 11, str(size))
+        _emit_tinfo(i, 27, out_path.name)
+        _emit('PRGT:5018,0,"Saving 1 titles into MKV files"')
+        _emit(f'PRGC:5017,0,"Title #{i + 1}"')
+        time.sleep(0.05)
+        if sample.exists():
+            shutil.copy2(sample, out_path)
+        else:
+            out_path.write_bytes(b"\x1aE\xdf\xa3")
+        _emit("PRGV:1,1,65536")
+        _emit_msg(5036, "Copy complete. 1 titles saved.")
+        return 0
+
     _emit(f"TCOUNT:{title_count}")
     _emit('CINFO:1,6209,"MockShow Season 1"')
     _emit('CINFO:2,0,"MOCK_DVD"')

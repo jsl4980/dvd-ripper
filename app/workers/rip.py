@@ -28,10 +28,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# `makemkvcon info <invalid>` still prints a `DRV:` table on Windows; use a
-# slot that is never a real drive so we never need an open disc for probing.
-_FAKE_DISC_SLOT_FOR_DRIVE_PROBE = "disc:99"
-
 from app.config import settings
 from app.db import (
     add_title,
@@ -41,6 +37,10 @@ from app.db import (
 from app.state import JobStatus
 
 log = logging.getLogger("rip")
+
+# `makemkvcon info <invalid>` still prints a `DRV:` table on Windows; use a
+# slot that is never a real drive so we never need an open disc for probing.
+_FAKE_DISC_SLOT_FOR_DRIVE_PROBE = "disc:99"
 
 # TINFO attribute IDs we care about (from MakeMKV's apdefs.h).
 ATTR_NAME = 2
@@ -189,6 +189,138 @@ async def map_windows_file_volume_to_disc_if_needed(source: str) -> str:
     return mapped
 
 
+def infer_combined_play_all_title_indices(
+    titles_attrs: dict[int, dict[int, str]],
+    *,
+    min_length_seconds: int,
+) -> set[int]:
+    """Detect a TV \"play all\" title whose length ≈ the sum of episode titles.
+
+    Many TV DVDs expose one long title (all episodes concatenated) plus each
+    episode as its own title. Ripping that marathon track wastes space and
+    review noise; we skip ripping it when the duration heuristic matches.
+    """
+    entries: list[tuple[int, int]] = []
+    for idx, attrs in titles_attrs.items():
+        ds = duration_to_seconds(attrs.get(ATTR_DURATION, ""))
+        if ds is None or ds < min_length_seconds:
+            continue
+        entries.append((idx, ds))
+    if len(entries) < 4:
+        return set()
+    entries.sort(key=lambda x: x[1], reverse=True)
+    max_idx, max_d = entries[0]
+    rest_sum = sum(d for _, d in entries[1:])
+    if rest_sum == 0:
+        return set()
+    ratio = max_d / rest_sum
+    # Allow slack for rounding and slightly short \"play all\" edits vs sum of eps.
+    if 0.88 <= ratio <= 1.18 and max_d >= 45 * 60:
+        log.info(
+            "skipping suspected play-all title index %d (%ds ≈ %.0f%% of other "
+            "titles' total %ds)",
+            max_idx,
+            max_d,
+            100.0 * ratio,
+            rest_sum,
+        )
+        return {max_idx}
+    return set()
+
+
+def _makemkv_cmd_prefix(*, min_length_seconds: int) -> list[str]:
+    binary = settings.makemkvcon_path
+    prefix: list[str] = []
+    if binary.lower().endswith(".py"):
+        prefix = [sys.executable]
+    return [
+        *prefix,
+        binary,
+        "-r",
+        "--noscan",
+        f"--minlength={min_length_seconds}",
+    ]
+
+
+async def _drain_makemkv_robot_stdout(proc: asyncio.subprocess.Process) -> dict[int, dict[int, str]]:
+    titles: dict[int, dict[int, str]] = {}
+    assert proc.stdout is not None
+    while True:
+        raw = await proc.stdout.readline()
+        if not raw:
+            break
+        line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+        parsed = parse_robot_line(line)
+        if parsed is None:
+            continue
+        kind, fields = parsed
+        if kind == "MSG" and len(fields) >= 4:
+            log.info("makemkv: %s", fields[3])
+        elif kind == "TINFO" and len(fields) >= 4:
+            try:
+                t_idx = int(fields[0])
+                attr_id = int(fields[1])
+            except ValueError:
+                continue
+            titles.setdefault(t_idx, {})[attr_id] = fields[3]
+        elif kind == "PRGT" and len(fields) >= 3:
+            log.info("phase: %s", fields[2])
+    return titles
+
+
+async def run_makemkv_info(
+    source: str,
+    *,
+    min_length_seconds: int = 120,
+) -> dict[int, dict[int, str]]:
+    """Run ``makemkvcon info`` and return TINFO attrs per title index (robot output)."""
+    cmd = [
+        *_makemkv_cmd_prefix(min_length_seconds=min_length_seconds),
+        "info",
+        source,
+    ]
+    log.info("running %s", " ".join(cmd))
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    titles = await _drain_makemkv_robot_stdout(proc)
+    rc = await proc.wait()
+    if rc != 0:
+        raise RuntimeError(f"makemkvcon info exited with code {rc}")
+    return titles
+
+
+async def run_makemkv_mkv_one_title(
+    source: str,
+    staging_dir: Path,
+    title_idx: int,
+    *,
+    min_length_seconds: int = 120,
+) -> dict[int, dict[int, str]]:
+    """Run ``makemkvcon mkv`` for a single title index."""
+    staging_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        *_makemkv_cmd_prefix(min_length_seconds=min_length_seconds),
+        "mkv",
+        source,
+        str(title_idx),
+        str(staging_dir),
+    ]
+    log.info("running %s", " ".join(cmd))
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    titles = await _drain_makemkv_robot_stdout(proc)
+    rc = await proc.wait()
+    if rc != 0:
+        raise RuntimeError(f"makemkvcon exited with code {rc}")
+    return titles
+
+
 async def run_makemkvcon(
     source: str,
     staging_dir: Path,
@@ -201,18 +333,8 @@ async def run_makemkvcon(
     short filler tracks (DVD menus, FBI warnings) that aren't worth ripping.
     """
     staging_dir.mkdir(parents=True, exist_ok=True)
-    binary = settings.makemkvcon_path
-    prefix: list[str] = []
-    # Convenience for dev: if MAKEMKVCON_PATH points at our mock .py file,
-    # invoke it through the current Python interpreter.
-    if binary.lower().endswith(".py"):
-        prefix = [sys.executable]
     cmd = [
-        *prefix,
-        binary,
-        "-r",
-        "--noscan",
-        f"--minlength={min_length_seconds}",
+        *_makemkv_cmd_prefix(min_length_seconds=min_length_seconds),
         "mkv",
         source,
         "all",
@@ -224,32 +346,7 @@ async def run_makemkvcon(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
     )
-
-    titles: dict[int, dict[int, str]] = {}
-    assert proc.stdout is not None
-    while True:
-        raw = await proc.stdout.readline()
-        if not raw:
-            break
-        line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
-        parsed = parse_robot_line(line)
-        if parsed is None:
-            continue
-        kind, fields = parsed
-        if kind == "MSG":
-            if len(fields) >= 4:
-                log.info("makemkv: %s", fields[3])
-        elif kind == "TINFO" and len(fields) >= 4:
-            try:
-                t_idx = int(fields[0])
-                attr_id = int(fields[1])
-            except ValueError:
-                continue
-            value = fields[3]
-            titles.setdefault(t_idx, {})[attr_id] = value
-        elif kind == "PRGT" and len(fields) >= 3:
-            log.info("phase: %s", fields[2])
-
+    titles = await _drain_makemkv_robot_stdout(proc)
     rc = await proc.wait()
     if rc != 0:
         raise RuntimeError(f"makemkvcon exited with code {rc}")
@@ -264,7 +361,34 @@ async def rip_one_disc(job: dict[str, Any]) -> None:
     source = await map_windows_file_volume_to_disc_if_needed(source)
     log.info("job %d: starting rip from %s -> %s", job_id, source, staging_dir)
 
-    titles_attrs = await run_makemkvcon(source, staging_dir)
+    min_len = 120
+    info_attrs = await run_makemkv_info(source, min_length_seconds=min_len)
+    skip_idx = infer_combined_play_all_title_indices(info_attrs, min_length_seconds=min_len)
+
+    if skip_idx:
+        candidates = sorted(
+            idx
+            for idx, attrs in info_attrs.items()
+            if (ds := duration_to_seconds(attrs.get(ATTR_DURATION, ""))) is not None
+            and ds >= min_len
+            and idx not in skip_idx
+        )
+        if not candidates:
+            raise RuntimeError("after play-all filtering, no titles left to rip")
+        log.info(
+            "job %d: ripping %d title(s) individually (skipped indices %s)",
+            job_id,
+            len(candidates),
+            sorted(skip_idx),
+        )
+        titles_attrs: dict[int, dict[int, str]] = {}
+        for t_idx in candidates:
+            part = await run_makemkv_mkv_one_title(
+                source, staging_dir, t_idx, min_length_seconds=min_len
+            )
+            titles_attrs.update(part)
+    else:
+        titles_attrs = await run_makemkvcon(source, staging_dir, min_length_seconds=min_len)
 
     written = sorted(staging_dir.glob("*.mkv"))
     if not written:
