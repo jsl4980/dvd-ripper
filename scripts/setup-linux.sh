@@ -35,6 +35,10 @@ command -v uv >/dev/null || { echo "error: uv missing (~/.local/bin not on PATH)
 
 echo "==> uv sync"
 uv sync
+if [[ ! -x "$ROOT/.venv/bin/uvicorn" ]]; then
+  echo "error: expected $ROOT/.venv/bin/uvicorn after uv sync" >&2
+  exit 1
+fi
 
 ENV_FILE="$ROOT/.env"
 if [[ ! -f "$ENV_FILE" ]]; then
@@ -89,5 +93,7 @@ fi
 command -v nvidia-smi >/dev/null 2>&1 || echo "NOTE: nvidia-smi missing — use ENCODER_PROFILE=x265 for CPU-only encodes."
 
 echo ""
+echo "Quick verify:"
+echo "  .venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000"
 echo "Done. Start:"
 echo "  uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000"

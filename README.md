@@ -40,7 +40,18 @@ Then open http://localhost:8000.
 
 ## Dev without a real DVD drive
 
-The mock MakeMKV binary at `tests/fixtures/mock_makemkvcon/mock_makemkvcon.py` emits realistic output and copies sample MKVs into staging. Point `MAKEMKVCON_PATH` at it in `.env` and trigger a fake rip via the web UI ("Add mock job" button in dev mode).
+The mock MakeMKV binary at `tests/fixtures/mock_makemkvcon/mock_makemkvcon.py`
+emits realistic output and copies sample MKVs into staging.
+
+Set both in `.env`:
+
+```dotenv
+MAKEMKVCON_PATH=./tests/fixtures/mock_makemkvcon/mock_makemkvcon.py
+ALLOW_MOCK_MAKEMKVCON=true
+```
+
+Then trigger a fake rip via the web UI ("Add mock job" button in dev mode).
+Without `ALLOW_MOCK_MAKEMKVCON=true`, the rip worker rejects mock binaries.
 
 ## Production (Linux desktop with NVIDIA 1050 Ti)
 

@@ -53,8 +53,13 @@ if (Test-Path $mockAbs) {
   if ($raw -match '(?m)^MAKEMKVCON_PATH=makemkvcon' -or $raw -match '(?m)^MAKEMKVCON_PATH=makemkvcon64\.exe') {
     $raw = $raw -replace '(?m)^MAKEMKVCON_PATH=.*$', "MAKEMKVCON_PATH=$mockRel"
     $raw = $raw -replace '(?m)^DVD_DEVICE=.*$', "DVD_DEVICE=disc:0"
+    if ($raw -match '(?m)^ALLOW_MOCK_MAKEMKVCON=') {
+      $raw = $raw -replace '(?m)^ALLOW_MOCK_MAKEMKVCON=.*$', "ALLOW_MOCK_MAKEMKVCON=true"
+    } else {
+      $raw = $raw.TrimEnd() + "`r`nALLOW_MOCK_MAKEMKVCON=true`r`n"
+    }
     [System.IO.File]::WriteAllText($envFile, $raw)
-    Write-Host "==> Set MAKEMKVCON_PATH -> $mockRel and DVD_DEVICE=disc:0 for mock rips"
+    Write-Host "==> Set MAKEMKVCON_PATH -> $mockRel, DVD_DEVICE=disc:0, ALLOW_MOCK_MAKEMKVCON=true"
   }
 }
 
