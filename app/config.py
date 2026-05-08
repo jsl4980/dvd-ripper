@@ -57,8 +57,8 @@ class Settings(BaseSettings):
 
     poll_interval_seconds: float = 2.0
 
-    # Auto-queue a rip when a fresh disc is inserted (Windows: watches the
-    # drive letter from ``DVD_DEVICE``).
+    # Auto-queue a rip when a fresh disc appears (Windows: drive letter in
+    # ``DVD_DEVICE``; Linux: ``/dev/sr*`` via mount + VIDEO_TS / BDMV probe).
     disc_watch_enabled: bool = True
     disc_watch_poll_seconds: float = 5.0
 

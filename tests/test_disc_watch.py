@@ -35,29 +35,76 @@ def test_parse_drive_letter(tmp_path, monkeypatch):
     _reset_app_modules()
 
 
+def test_parse_linux_disc_device(tmp_path, monkeypatch):
+    _common_env(tmp_path, monkeypatch)
+    from app.workers.disc_watch import parse_linux_disc_device
+
+    assert parse_linux_disc_device("D:") is None
+    assert parse_linux_disc_device("disc:0") is None
+    assert parse_linux_disc_device("") is None
+    assert parse_linux_disc_device("/dev/sr0") is not None
+    assert parse_linux_disc_device("  /dev/sr1  ") is not None
+    _reset_app_modules()
+
+
+def test_unescape_proc_fs_token(tmp_path, monkeypatch):
+    _common_env(tmp_path, monkeypatch)
+    from app.workers.disc_watch import _unescape_proc_fs_token
+
+    assert _unescape_proc_fs_token("/run/foo\\040bar") == "/run/foo bar"
+    _reset_app_modules()
+
+
+def test_is_linux_dvd_present_under_mount(tmp_path, monkeypatch):
+    _common_env(tmp_path, monkeypatch)
+    from app.workers import disc_watch as dw
+
+    root = tmp_path / "disc"
+    root.mkdir()
+    (root / "VIDEO_TS").mkdir()
+    monkeypatch.setattr(dw, "find_linux_mountpoint_for_device", lambda _p: str(root))
+    assert dw.is_linux_dvd_present_sync("/dev/sr0") is True
+    (root / "VIDEO_TS").rmdir()
+    assert dw.is_linux_dvd_present_sync("/dev/sr0") is False
+    _reset_app_modules()
+
+
+def test_disc_watcher_requires_single_target(tmp_path, monkeypatch):
+    _common_env(tmp_path, monkeypatch)
+    from app.workers.disc_watch import DiscWatcher
+
+    with pytest.raises(ValueError, match="exactly one"):
+        DiscWatcher()
+    with pytest.raises(ValueError, match="exactly one"):
+        DiscWatcher(drive_letter="D", linux_device="/dev/sr0")
+    _reset_app_modules()
+
+
 @pytest.mark.parametrize(
     "prev,present,in_flight,expected_action,expected_state",
     [
         # Startup: disc already loaded, no rip in flight -> queue once.
-        ("unknown", True,  False, "queue_startup", "present"),
+        ("unknown", True, False, "queue_startup", "present"),
         # Startup: disc already loaded but rip already running -> don't double-queue.
-        ("unknown", True,  True,  "noop",          "present"),
+        ("unknown", True, True, "noop", "present"),
         # Startup: drive empty.
-        ("unknown", False, False, "noop",          "absent"),
+        ("unknown", False, False, "noop", "absent"),
         # Real insertion event.
-        ("absent",  True,  False, "queue_insert",  "present"),
+        ("absent", True, False, "queue_insert", "present"),
         # Insertion while a rip is in flight (e.g. user swapping drives) - still queue;
         # the new job will wait its turn in the queue.
-        ("absent",  True,  True,  "queue_insert",  "present"),
+        ("absent", True, True, "queue_insert", "present"),
         # Steady state: disc still present.
-        ("present", True,  False, "noop",          "present"),
-        ("present", True,  True,  "noop",          "present"),
+        ("present", True, False, "noop", "present"),
+        ("present", True, True, "noop", "present"),
         # Eject: log it once, then quiet.
-        ("present", False, False, "log_eject",     "absent"),
-        ("absent",  False, False, "noop",          "absent"),
+        ("present", False, False, "log_eject", "absent"),
+        ("absent", False, False, "noop", "absent"),
     ],
 )
-def test_decide_action(tmp_path, monkeypatch, prev, present, in_flight, expected_action, expected_state):
+def test_decide_action(
+    tmp_path, monkeypatch, prev, present, in_flight, expected_action, expected_state
+):
     _common_env(tmp_path, monkeypatch)
     from app.workers.disc_watch import decide_action
 
@@ -71,8 +118,8 @@ def test_decide_action(tmp_path, monkeypatch, prev, present, in_flight, expected
 async def test_poll_once_queues_on_first_present_at_startup(tmp_path, monkeypatch):
     _common_env(tmp_path, monkeypatch)
     from app.db import init_db, list_jobs
-    from app.workers.disc_watch import DiscWatcher
     from app.workers import disc_watch as dw
+    from app.workers.disc_watch import DiscWatcher
 
     await init_db()
     monkeypatch.setattr(dw, "is_dvd_present", _const_async(True))
@@ -95,16 +142,37 @@ async def test_poll_once_queues_on_first_present_at_startup(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_poll_once_queues_on_first_present_at_startup_linux(tmp_path, monkeypatch):
+    _common_env(tmp_path, monkeypatch)
+    from app.db import init_db, list_jobs
+    from app.workers import disc_watch as dw
+    from app.workers.disc_watch import DiscWatcher
+
+    await init_db()
+    monkeypatch.setattr(dw, "is_dvd_present_linux", _const_async(True))
+
+    watcher = DiscWatcher(linux_device="/dev/sr0")
+    action = await watcher.poll_once()
+    assert action == "queue_startup"
+    assert watcher.state == "present"
+    jobs = await list_jobs()
+    assert len(jobs) == 1
+    _reset_app_modules()
+
+
+@pytest.mark.asyncio
 async def test_poll_once_queues_on_insertion_after_eject(tmp_path, monkeypatch):
     _common_env(tmp_path, monkeypatch)
     from app.db import init_db, list_jobs
-    from app.workers.disc_watch import DiscWatcher
     from app.workers import disc_watch as dw
+    from app.workers.disc_watch import DiscWatcher
 
     await init_db()
     states = iter([True, False, True])
-    async def stub(_letter):
+
+    async def stub(*_args, **_kw):
         return next(states)
+
     monkeypatch.setattr(dw, "is_dvd_present", stub)
 
     watcher = DiscWatcher(drive_letter="D")
@@ -123,15 +191,18 @@ async def test_poll_once_queues_on_insertion_after_eject(tmp_path, monkeypatch):
 async def test_poll_once_skips_when_makemkv_subprocess_active(tmp_path, monkeypatch):
     _common_env(tmp_path, monkeypatch)
     from app.db import init_db, list_jobs
+    from app.workers import disc_watch as dw
+    from app.workers import rip as rip_worker
     from app.workers.disc_watch import DiscWatcher
-    from app.workers import disc_watch as dw, rip as rip_worker
 
     await init_db()
 
-    presence_calls: list[str] = []
-    async def stub(letter):
-        presence_calls.append(letter)
+    presence_calls: list[bool] = []
+
+    async def stub(*_args):
+        presence_calls.append(True)
         return True
+
     monkeypatch.setattr(dw, "is_dvd_present", stub)
 
     rip_worker._active_mkv[999] = object()  # type: ignore[assignment]
@@ -151,8 +222,8 @@ async def test_poll_once_noops_when_probe_returns_none(tmp_path, monkeypatch):
     """A drive-locked timeout must not flip state or enqueue anything."""
     _common_env(tmp_path, monkeypatch)
     from app.db import init_db, list_jobs
-    from app.workers.disc_watch import DiscWatcher
     from app.workers import disc_watch as dw
+    from app.workers.disc_watch import DiscWatcher
 
     await init_db()
     monkeypatch.setattr(dw, "is_dvd_present", _const_async(None))
@@ -162,10 +233,17 @@ async def test_poll_once_noops_when_probe_returns_none(tmp_path, monkeypatch):
     assert action == "noop"
     assert watcher.state == "unknown"
     assert await list_jobs() == []
+
+    monkeypatch.setattr(dw, "is_dvd_present_linux", _const_async(None))
+    lw = DiscWatcher(linux_device="/dev/sr0")
+    action2 = await lw.poll_once()
+    assert action2 == "noop"
+    assert lw.state == "unknown"
     _reset_app_modules()
 
 
 def _const_async(value):
-    async def _fn(_letter):
+    async def _fn(*_a, **_kw):
         return value
+
     return _fn
