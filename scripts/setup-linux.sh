@@ -48,7 +48,44 @@ echo "==> NOTE: setup does not auto-enable the mock ripper."
 echo "         Keep MAKEMKVCON_PATH=makemkvcon for real discs."
 echo "         Use the mock only for explicit dev/testing."
 
-command -v makemkvcon >/dev/null 2>&1 || echo "NOTE: makemkvcon not on PATH — install MakeMKV or set MAKEMKVCON_PATH in .env."
+if ! command -v makemkvcon >/dev/null 2>&1; then
+  echo "==> makemkvcon not found; attempting apt install (makemkv-bin makemkv-oss)"
+  sudo apt-get install -y makemkv-bin makemkv-oss || true
+fi
+if ! command -v makemkvcon >/dev/null 2>&1; then
+  echo "==> apt did not provide makemkvcon; attempting snap install (Ubuntu)"
+  if command -v snap >/dev/null 2>&1; then
+    sudo snap install makemkv || true
+    # Best-effort interface connections for optical drive + external media.
+    sudo snap connect makemkv:optical-drive || true
+    sudo snap connect makemkv:removable-media || true
+    if command -v makemkvcon >/dev/null 2>&1; then
+      :
+    elif command -v makemkv.makemkvcon >/dev/null 2>&1; then
+      if ! grep -qE '^MAKEMKVCON_PATH=' "$ENV_FILE"; then
+        echo "MAKEMKVCON_PATH=makemkv.makemkvcon" >> "$ENV_FILE"
+      else
+        sed -i 's#^MAKEMKVCON_PATH=.*#MAKEMKVCON_PATH=makemkv.makemkvcon#' "$ENV_FILE"
+      fi
+      echo "==> Set MAKEMKVCON_PATH=makemkv.makemkvcon in .env"
+    fi
+  else
+    echo "==> snap is not available; skipping snap fallback"
+  fi
+fi
+if ! command -v makemkvcon >/dev/null 2>&1 && ! command -v makemkv.makemkvcon >/dev/null 2>&1; then
+  cat <<'EOF'
+ERROR: makemkvcon is still not installed.
+
+Install MakeMKV manually, then rerun this script:
+  1) Download package or source from https://www.makemkv.com/download/
+  2) Install so `makemkvcon` is available on PATH (or use `makemkv.makemkvcon`)
+  3) Verify with: command -v makemkvcon || command -v makemkv.makemkvcon
+
+Then set MAKEMKVCON_PATH in .env if needed.
+EOF
+  exit 1
+fi
 command -v nvidia-smi >/dev/null 2>&1 || echo "NOTE: nvidia-smi missing — use ENCODER_PROFILE=x265 for CPU-only encodes."
 
 echo ""
