@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     db_path: Path = Path("./pipeline.db")
 
     makemkvcon_path: str = "makemkvcon"
+    allow_mock_makemkvcon: bool = False
     handbrakecli_path: str = "HandBrakeCLI"
     ffprobe_path: str = "ffprobe"
     ffmpeg_path: str = "ffmpeg"

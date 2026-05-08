@@ -44,12 +44,9 @@ else
   echo "==> .env already exists (left unchanged)"
 fi
 
-MOCK_REL="tests/fixtures/mock_makemkvcon/mock_makemkvcon.py"
-if [[ -f "$ROOT/$MOCK_REL" ]] && grep -qE '^MAKEMKVCON_PATH=makemkvcon' "$ENV_FILE" 2>/dev/null; then
-  sed -i "s#^MAKEMKVCON_PATH=.*#MAKEMKVCON_PATH=$ROOT/$MOCK_REL#" "$ENV_FILE"
-  sed -i 's/^DVD_DEVICE=.*/DVD_DEVICE=disc:0/' "$ENV_FILE"
-  echo "==> Set MAKEMKVCON_PATH -> absolute mock script and DVD_DEVICE=disc:0"
-fi
+echo "==> NOTE: setup does not auto-enable the mock ripper."
+echo "         Keep MAKEMKVCON_PATH=makemkvcon for real discs."
+echo "         Use the mock only for explicit dev/testing."
 
 command -v makemkvcon >/dev/null 2>&1 || echo "NOTE: makemkvcon not on PATH — install MakeMKV or set MAKEMKVCON_PATH in .env."
 command -v nvidia-smi >/dev/null 2>&1 || echo "NOTE: nvidia-smi missing — use ENCODER_PROFILE=x265 for CPU-only encodes."

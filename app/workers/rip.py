@@ -306,6 +306,12 @@ def filter_short_tv_extras_below_half_median(
 
 def _makemkv_cmd_prefix(*, min_length_seconds: int) -> list[str]:
     binary = settings.makemkvcon_path
+    binary_norm = binary.replace("\\", "/").lower()
+    if "tests/fixtures/mock_makemkvcon/" in binary_norm and not settings.allow_mock_makemkvcon:
+        raise RuntimeError(
+            "MAKEMKVCON_PATH points to the test mock binary. "
+            "Install real makemkvcon or set ALLOW_MOCK_MAKEMKVCON=true for dev-only testing."
+        )
     prefix: list[str] = []
     if binary.lower().endswith(".py"):
         prefix = [sys.executable]

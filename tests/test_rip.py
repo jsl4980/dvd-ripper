@@ -25,6 +25,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("LIBRARY_ROOT", str(tmp_path / "library"))
     monkeypatch.setenv("DB_PATH", str(tmp_path / "pipeline.db"))
     monkeypatch.setenv("MAKEMKVCON_PATH", str(MOCK_PY))
+    monkeypatch.setenv("ALLOW_MOCK_MAKEMKVCON", "true")
     monkeypatch.setenv("DVD_DEVICE", "disc:0")
     monkeypatch.setenv("MOCK_TITLE_COUNT", "3")
     monkeypatch.setenv("MOCK_TITLE_SECONDS", "2")
@@ -140,6 +141,7 @@ async def test_rip_worker_skips_play_all_with_mock_info(tmp_path, monkeypatch):
     monkeypatch.setenv("LIBRARY_ROOT", str(tmp_path / "library"))
     monkeypatch.setenv("DB_PATH", str(tmp_path / "pipeline.db"))
     monkeypatch.setenv("MAKEMKVCON_PATH", str(MOCK_PY))
+    monkeypatch.setenv("ALLOW_MOCK_MAKEMKVCON", "true")
     monkeypatch.setenv("DVD_DEVICE", "disc:0")
     monkeypatch.setenv("MOCK_INFO_PLAY_ALL", "1")
     monkeypatch.setenv("MOCK_TITLE_COUNT", "6")
@@ -181,6 +183,22 @@ async def test_rip_worker_skips_play_all_with_mock_info(tmp_path, monkeypatch):
     assert len(titles) == 5
     assert {t["title_index"] for t in titles} == {1, 2, 3, 4, 5}
     assert job["disc_title"] == "MOCK_PLAY_ALL_DISC"
+    _reset_app_modules()
+
+
+def test_mock_makemkv_requires_explicit_opt_in(tmp_path, monkeypatch):
+    monkeypatch.setenv("APP_ENV", "dev")
+    monkeypatch.setenv("STAGING_DIR", str(tmp_path / "staging"))
+    monkeypatch.setenv("LIBRARY_ROOT", str(tmp_path / "library"))
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "pipeline.db"))
+    monkeypatch.setenv("MAKEMKVCON_PATH", str(MOCK_PY))
+    monkeypatch.delenv("ALLOW_MOCK_MAKEMKVCON", raising=False)
+    _reset_app_modules()
+
+    from app.workers.rip import _makemkv_cmd_prefix
+
+    with pytest.raises(RuntimeError, match="ALLOW_MOCK_MAKEMKVCON=true"):
+        _makemkv_cmd_prefix(min_length_seconds=120)
     _reset_app_modules()
 
 
