@@ -28,6 +28,7 @@ import re
 import shutil
 import statistics
 import sys
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -328,8 +329,8 @@ def _resolve_makemkv_executable(binary: str) -> str:
     raise RuntimeError(
         f"MAKEMKVCON_PATH={binary!r} not found on PATH. "
         f"PATH={os.environ.get('PATH', '')!r}. "
-        "Install MakeMKV, set an absolute path in MAKEMKVCON_PATH, or extend PATH "
-        "(e.g. include /snap/bin for snap installs; see deploy/dvd-pipeline.service)."
+        "Install native makemkvcon (snap MakeMKV is not supported), or set an "
+        "absolute path in MAKEMKVCON_PATH / extend PATH in your systemd unit."
     )
 
 
@@ -422,11 +423,20 @@ def disc_title_from_cinfo(cinfo: dict[int, str]) -> str | None:
     return None
 
 
+def _makemkv_nonzero_exit_message(rc: int, recent_msgs: deque[str] | None) -> str:
+    """Human-readable error for logs/job status when makemkvcon returns non-zero."""
+    parts = [f"makemkvcon exited with code {rc}"]
+    if recent_msgs:
+        parts.append("makemkv: " + " | ".join(recent_msgs))
+    return "; ".join(parts)
+
+
 async def _drain_makemkv_robot_stdout(
     proc: asyncio.subprocess.Process,
     job_id: int | None,
     *,
     cinfo_out: dict[int, str] | None = None,
+    recent_msgs: deque[str] | None = None,
 ) -> dict[int, dict[int, str]]:
     titles: dict[int, dict[int, str]] = {}
     assert proc.stdout is not None
@@ -441,6 +451,8 @@ async def _drain_makemkv_robot_stdout(
         kind, fields = parsed
         if kind == "MSG" and len(fields) >= 4:
             log.info("makemkv: %s", fields[3])
+            if recent_msgs is not None:
+                recent_msgs.append(fields[3])
         elif kind == "TINFO" and len(fields) >= 4:
             try:
                 t_idx = int(fields[0])
@@ -476,8 +488,11 @@ async def run_makemkv_info(
     if job_id is not None:
         register_rip_subprocess(job_id, proc)
     cinfo: dict[int, str] = {}
+    recent_msgs: deque[str] = deque(maxlen=25)
     try:
-        titles = await _drain_makemkv_robot_stdout(proc, job_id, cinfo_out=cinfo)
+        titles = await _drain_makemkv_robot_stdout(
+            proc, job_id, cinfo_out=cinfo, recent_msgs=recent_msgs
+        )
     except RipCancelled:
         if proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
@@ -492,7 +507,7 @@ async def run_makemkv_info(
     if job_id is not None and await is_job_cancel_requested(job_id):
         raise RipCancelled()
     if rc != 0:
-        raise RuntimeError(f"makemkvcon info exited with code {rc}")
+        raise RuntimeError(_makemkv_nonzero_exit_message(rc, recent_msgs))
     return titles, cinfo
 
 
@@ -521,8 +536,9 @@ async def run_makemkv_mkv_one_title(
     )
     if job_id is not None:
         register_rip_subprocess(job_id, proc)
+    recent_msgs: deque[str] = deque(maxlen=25)
     try:
-        titles = await _drain_makemkv_robot_stdout(proc, job_id)
+        titles = await _drain_makemkv_robot_stdout(proc, job_id, recent_msgs=recent_msgs)
     except RipCancelled:
         if proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
@@ -537,7 +553,7 @@ async def run_makemkv_mkv_one_title(
     if job_id is not None and await is_job_cancel_requested(job_id):
         raise RipCancelled()
     if rc != 0:
-        raise RuntimeError(f"makemkvcon exited with code {rc}")
+        raise RuntimeError(_makemkv_nonzero_exit_message(rc, recent_msgs))
     return titles
 
 
@@ -569,8 +585,9 @@ async def run_makemkvcon(
     )
     if job_id is not None:
         register_rip_subprocess(job_id, proc)
+    recent_msgs: deque[str] = deque(maxlen=25)
     try:
-        titles = await _drain_makemkv_robot_stdout(proc, job_id)
+        titles = await _drain_makemkv_robot_stdout(proc, job_id, recent_msgs=recent_msgs)
     except RipCancelled:
         if proc.returncode is None:
             with contextlib.suppress(ProcessLookupError):
@@ -585,7 +602,7 @@ async def run_makemkvcon(
     if job_id is not None and await is_job_cancel_requested(job_id):
         raise RipCancelled()
     if rc != 0:
-        raise RuntimeError(f"makemkvcon exited with code {rc}")
+        raise RuntimeError(_makemkv_nonzero_exit_message(rc, recent_msgs))
     return titles
 
 

@@ -30,9 +30,9 @@ else
   echo "    nvidia-smi not found — OK if you use CPU x265 profile instead"
 fi
 
-if ! command -v makemkvcon >/dev/null 2>&1 && ! command -v makemkv.makemkvcon >/dev/null 2>&1; then
-  echo "ERROR: MakeMKV CLI not found (makemkvcon or makemkv.makemkvcon)." >&2
-  echo "       Install MakeMKV first, then re-run this preflight." >&2
+if ! command -v makemkvcon >/dev/null 2>&1; then
+  echo "ERROR: native makemkvcon not on PATH (snap MakeMKV is not supported)." >&2
+  echo "       Install from https://www.makemkv.com/download/ or distro packages." >&2
   exit 1
 fi
 

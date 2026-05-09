@@ -57,6 +57,8 @@ Without `ALLOW_MOCK_MAKEMKVCON=true`, the rip worker rejects mock binaries.
 
 See [`deploy/README.md`](deploy/README.md) for systemd unit, udev rule, SMB mount, and install script details.
 
+**Linux:** use a **native** `makemkvcon` (official build or distro packages). The Ubuntu **Snap** package for MakeMKV is **not supported** with this pipeline (systemd + service user / cgroup and drive access issues).
+
 ## Project layout
 
 ```

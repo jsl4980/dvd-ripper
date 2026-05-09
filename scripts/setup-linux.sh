@@ -57,36 +57,21 @@ if ! command -v makemkvcon >/dev/null 2>&1; then
   sudo apt-get install -y makemkv-bin makemkv-oss || true
 fi
 if ! command -v makemkvcon >/dev/null 2>&1; then
-  echo "==> apt did not provide makemkvcon; attempting snap install (Ubuntu)"
-  if command -v snap >/dev/null 2>&1; then
-    sudo snap install makemkv || true
-    # Best-effort interface connections for optical drive + external media.
-    sudo snap connect makemkv:optical-drive || true
-    sudo snap connect makemkv:removable-media || true
-    if command -v makemkvcon >/dev/null 2>&1; then
-      :
-    elif command -v makemkv.makemkvcon >/dev/null 2>&1; then
-      if ! grep -qE '^MAKEMKVCON_PATH=' "$ENV_FILE"; then
-        echo "MAKEMKVCON_PATH=makemkv.makemkvcon" >> "$ENV_FILE"
-      else
-        sed -i 's#^MAKEMKVCON_PATH=.*#MAKEMKVCON_PATH=makemkv.makemkvcon#' "$ENV_FILE"
-      fi
-      echo "==> Set MAKEMKVCON_PATH=makemkv.makemkvcon in .env"
-    fi
-  else
-    echo "==> snap is not available; skipping snap fallback"
-  fi
+  echo "==> NOTE: Snap MakeMKV is not supported for this project (systemd / service user)."
+  echo "    Install native makemkvcon from https://www.makemkv.com/download/"
+  echo "    or use distro packages (makemkv-bin / makemkv-oss) when available."
 fi
-if ! command -v makemkvcon >/dev/null 2>&1 && ! command -v makemkv.makemkvcon >/dev/null 2>&1; then
+if ! command -v makemkvcon >/dev/null 2>&1; then
   cat <<'EOF'
-ERROR: makemkvcon is still not installed.
+ERROR: native makemkvcon not found on PATH.
 
-Install MakeMKV manually, then rerun this script:
-  1) Download package or source from https://www.makemkv.com/download/
-  2) Install so `makemkvcon` is available on PATH (or use `makemkv.makemkvcon`)
-  3) Verify with: command -v makemkvcon || command -v makemkv.makemkvcon
+Do not use the Ubuntu snap for MakeMKV with this pipeline.
+Install a native binary, then rerun this script:
+  https://www.makemkv.com/download/
+  (or: sudo apt install makemkv-bin makemkv-oss — if your release packages it)
 
-Then set MAKEMKVCON_PATH in .env if needed.
+Verify: command -v makemkvcon
+Then set MAKEMKVCON_PATH in .env to a full path if needed.
 EOF
   exit 1
 fi

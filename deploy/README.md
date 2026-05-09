@@ -23,33 +23,32 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ## 2) Install MakeMKV CLI (`makemkvcon`)
 
-Preferred: install MakeMKV so `makemkvcon` is on `PATH`.
-On some Ubuntu releases, these packages work:
+**Do not use the Ubuntu Snap package for MakeMKV with this pipeline.** The snap
+build is not compatible with typical **systemd + dedicated service user**
+setups (e.g. `is not a snap cgroup`, optical-drive confinement, and unreliable
+`makemkvcon` under `dvdrip`). Use a **native** install only.
+
+Install so a real `makemkvcon` binary is on `PATH` for the `dvdrip` user:
+
+1. **Distro packages** (when available):
+
+   ```bash
+   sudo apt install -y makemkv-bin makemkv-oss
+   ```
+
+2. **Otherwise:** build or install from [makemkv.com](https://www.makemkv.com/download/)
+   (official Linux tarball / instructions) or your distribution’s equivalent,
+   and ensure `makemkvcon` lands in `/usr/local/bin` or similar.
+
+Verify as the user that will run the service:
 
 ```bash
-sudo apt install -y makemkv-bin makemkv-oss
+sudo -u dvdrip -H bash -lc 'command -v makemkvcon && makemkvcon --version'
 ```
 
-Fallback: snap (less reliable for optical-device passthrough):
-
-```bash
-sudo snap install makemkv
-sudo snap connect makemkv:optical-drive
-sudo snap connect makemkv:removable-media
-```
-
-Verify:
-
-```bash
-command -v makemkvcon || command -v makemkv.makemkvcon
-```
-
-If neither command exists, install from [makemkv.com](https://www.makemkv.com/download/).
-
-**systemd / snap:** `dvd-pipeline.service` sets `PATH` to include `/snap/bin` so
-`MAKEMKVCON_PATH=makemkvcon` works when MakeMKV is installed via snap. If you
-override `PATH` in a drop-in, keep `/snap/bin` or set `MAKEMKVCON_PATH` to the
-full path from `command -v makemkvcon`.
+Set `MAKEMKVCON_PATH` in `/etc/dvd-pipeline.env` to the full path if `makemkvcon`
+is not on the default `PATH` for systemd (see `Environment=PATH=` in
+`deploy/dvd-pipeline.service`).
 
 ## 3) Configure SMB mount (`/mnt/plex`)
 
@@ -102,7 +101,7 @@ Minimum critical values:
 - `APP_ENV=prod`
 - `LIBRARY_ROOT=/mnt/plex`
 - `DVD_DEVICE=/dev/sr0`
-- `MAKEMKVCON_PATH=makemkvcon` (or `makemkv.makemkvcon` for snap)
+- `MAKEMKVCON_PATH=makemkvcon` (native binary only; snap MakeMKV is not supported)
 - `ALLOW_MOCK_MAKEMKVCON=false` (or unset)
 - Plex/TMDB/TVDB credentials
 
@@ -148,3 +147,19 @@ From another machine on the network, use `http://<this-host-ip>:8000/` (not
 `8000/tcp` when using UFW.
 
 If service shows `status=217/USER`, the `dvdrip` user/group is missing or invalid.
+
+## MakeMKV rip fails (`makemkvcon info exited with code 1`)
+
+Check journal lines just before the error — they include MakeMKV `MSG` text when
+available.
+
+Common fixes:
+
+- **`dvdrip` must access the drive:** `sudo usermod -aG cdrom dvdrip` then log
+  out/in or restart the service.
+- **Disc / device:** confirm `DVD_DEVICE` (e.g. `/dev/sr0`) matches `lsblk` and
+  a video disc is mounted or readable.
+- **Blu-ray:** current MakeMKV beta key may be required; see [makemkv.com](https://www.makemkv.com/).
+- **Snap MakeMKV:** not supported — use a native `makemkvcon`. If you previously
+  installed the snap, remove it (`sudo snap remove makemkv`) so it does not
+  shadow a native binary, then reinstall from makemkv.com or apt as above.
