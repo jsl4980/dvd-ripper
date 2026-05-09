@@ -10,7 +10,8 @@ Type=simple
 User=dvdrip
 Group=dvdrip
 WorkingDirectory=/opt/dvd-ripper
-Environment=PATH=/opt/dvd-ripper/.venv/bin:/usr/local/bin:/usr/bin
+# Include /snap/bin so MAKEMKVCON_PATH=makemkvcon works when MakeMKV is installed via snap.
+Environment=PATH=/opt/dvd-ripper/.venv/bin:/usr/local/bin:/usr/bin:/snap/bin
 EnvironmentFile=-/etc/dvd-pipeline.env
 ExecStart=/opt/dvd-ripper/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 Restart=on-failure

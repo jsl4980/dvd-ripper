@@ -46,6 +46,11 @@ command -v makemkvcon || command -v makemkv.makemkvcon
 
 If neither command exists, install from [makemkv.com](https://www.makemkv.com/download/).
 
+**systemd / snap:** `dvd-pipeline.service` sets `PATH` to include `/snap/bin` so
+`MAKEMKVCON_PATH=makemkvcon` works when MakeMKV is installed via snap. If you
+override `PATH` in a drop-in, keep `/snap/bin` or set `MAKEMKVCON_PATH` to the
+full path from `command -v makemkvcon`.
+
 ## 3) Configure SMB mount (`/mnt/plex`)
 
 Create `/etc/plex-smb.creds` (mode `600`):

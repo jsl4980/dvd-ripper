@@ -23,7 +23,9 @@ import contextlib
 import csv
 import io
 import logging
+import os
 import re
+import shutil
 import statistics
 import sys
 from dataclasses import dataclass
@@ -191,7 +193,8 @@ async def makemkv_disc_index_for_windows_drive(letter: str) -> int | None:
     prefix: list[str] = []
     if binary.lower().endswith(".py"):
         prefix = [sys.executable]
-    cmd = [*prefix, binary, "-r", "--noscan", "info", _FAKE_DISC_SLOT_FOR_DRIVE_PROBE]
+    exe = _resolve_makemkv_executable(binary)
+    cmd = [*prefix, exe, "-r", "--noscan", "info", _FAKE_DISC_SLOT_FOR_DRIVE_PROBE]
     proc = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -304,6 +307,32 @@ def filter_short_tv_extras_below_half_median(
     return sorted(kept_idx)
 
 
+def _resolve_makemkv_executable(binary: str) -> str:
+    """Return a filesystem path for subprocess; raise if missing."""
+    if binary.lower().endswith(".py"):
+        p = Path(binary).expanduser().resolve()
+        if not p.is_file():
+            raise RuntimeError(f"MAKEMKVCON_PATH script not found: {p}")
+        return str(p)
+    expanded = os.path.expandvars(os.path.expanduser(binary))
+    if os.path.isabs(expanded) or os.sep in expanded or (
+        sys.platform == "win32" and len(expanded) >= 2 and expanded[1] == ":"
+    ):
+        p = Path(expanded).resolve()
+        if not p.is_file():
+            raise RuntimeError(f"MAKEMKVCON_PATH file not found: {p}")
+        return str(p)
+    found = shutil.which(expanded)
+    if found:
+        return found
+    raise RuntimeError(
+        f"MAKEMKVCON_PATH={binary!r} not found on PATH. "
+        f"PATH={os.environ.get('PATH', '')!r}. "
+        "Install MakeMKV, set an absolute path in MAKEMKVCON_PATH, or extend PATH "
+        "(e.g. include /snap/bin for snap installs; see deploy/dvd-pipeline.service)."
+    )
+
+
 def _makemkv_cmd_prefix(*, min_length_seconds: int) -> list[str]:
     binary = settings.makemkvcon_path
     binary_norm = binary.replace("\\", "/").lower()
@@ -315,9 +344,10 @@ def _makemkv_cmd_prefix(*, min_length_seconds: int) -> list[str]:
     prefix: list[str] = []
     if binary.lower().endswith(".py"):
         prefix = [sys.executable]
+    exe = _resolve_makemkv_executable(binary)
     return [
         *prefix,
-        binary,
+        exe,
         "-r",
         "--noscan",
         f"--minlength={min_length_seconds}",
