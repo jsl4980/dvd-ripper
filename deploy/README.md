@@ -120,6 +120,7 @@ The unit expects:
 - `/opt/dvd-ripper/.venv/bin/uvicorn` exists
 - `User=Group=dvdrip`
 - `/etc/dvd-pipeline.env` exists
+- Uvicorn binds `--host 0.0.0.0 --port 8000` (reachable on the LAN; open firewall if needed)
 
 ## 7) Optional: auto-queue job on disc insert (udev)
 
@@ -130,7 +131,8 @@ sudo udevadm control --reload-rules
 sudo systemctl daemon-reload
 ```
 
-Adjust `dvd-insert@.service` if the API endpoint is not `127.0.0.1:8000`.
+`dvd-insert@.service` posts to `http://127.0.0.1:8000/...` on this host only.
+Change that URL if you move the API to another host/port.
 
 ## 8) Verify runtime
 
@@ -140,5 +142,9 @@ sudo journalctl -u dvd-pipeline.service -n 100 --no-pager
 curl -sS http://127.0.0.1:8000/healthz
 curl -sS -X POST http://127.0.0.1:8000/api/jobs -H 'Content-Type: application/json' -d '{}'
 ```
+
+From another machine on the network, use `http://<this-host-ip>:8000/` (not
+`localhost`). If the page does not load, check `sudo ufw status` and allow
+`8000/tcp` when using UFW.
 
 If service shows `status=217/USER`, the `dvdrip` user/group is missing or invalid.

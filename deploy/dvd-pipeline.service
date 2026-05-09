@@ -13,7 +13,10 @@ WorkingDirectory=/opt/dvd-ripper
 # Include /snap/bin so MAKEMKVCON_PATH=makemkvcon works when MakeMKV is installed via snap.
 Environment=PATH=/opt/dvd-ripper/.venv/bin:/usr/local/bin:/usr/bin:/snap/bin
 EnvironmentFile=-/etc/dvd-pipeline.env
-ExecStart=/opt/dvd-ripper/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+# Bind all interfaces so the web UI is reachable on the LAN. Local hooks
+# (e.g. dvd-insert@.service) still use http://127.0.0.1:8000/... on this host.
+# For localhost-only, use a systemd drop-in to override --host 127.0.0.1.
+ExecStart=/opt/dvd-ripper/.venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=5
 
